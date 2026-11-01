@@ -76,13 +76,16 @@ class OffenceAI(BaseAgent):
         self.task_count += 1
         self.heartbeat()
 
-        if level == "FULL_CONTAINMENT" and not human_confirmed:
+        if level not in {"HEIGHTENED", "FULL_CONTAINMENT"}:
+            return {"success": False, "error": "Unsupported lockdown level."}
+
+        if not human_confirmed:
             is_permitted, err = check_permission(AgentRole.OFFENCE, Permission.ACTIVATE_EMERGENCY, human_confirmed=False)
             return {
                 "success": False,
-                "error": err or "Full system containment requires explicit operator confirmation.",
+                "error": err or "Emergency mode requires explicit operator confirmation.",
                 "pending_approval": True,
-                "action": "FULL_CONTAINMENT"
+                "action": level
             }
 
         self.lockdown_level = level
@@ -98,12 +101,13 @@ class OffenceAI(BaseAgent):
         status.lockdown_level = level
         
         containment_log = [
-            f"Lockdown activated to {level}",
-            "Defensive vault sealed and credentials purged from volatile memory",
-            "Informer AI audio alerts broadcasted"
+            f"Guard AI incident mode set to {level}",
+            "Vault session locked in this Guard AI process",
+            "Incident recorded in the local audit ledger",
+            "No operating-system, process, or network isolation is performed by this prototype",
         ]
         if target:
-            containment_log.append(f"Target '{target}' flagged for isolation")
+            containment_log.append(f"Target '{target}' recorded for operator review")
         status.containment_actions_json = json.dumps(containment_log)
         db.commit()
 
@@ -134,6 +138,12 @@ class OffenceAI(BaseAgent):
         """Resets emergency containment back to normal STANDARD status."""
         self.task_count += 1
         self.heartbeat()
+
+        permitted, message = check_permission(
+            AgentRole.OFFENCE, Permission.RESET_EMERGENCY, human_confirmed=human_confirmed
+        )
+        if not permitted:
+            return {"success": False, "error": message, "pending_approval": True}
 
         self.lockdown_level = "STANDARD"
         status = db.query(EmergencyStatus).filter_by(id=1).first()
@@ -224,14 +234,14 @@ class OffenceAI(BaseAgent):
                 "action": "PROCESS_TERMINATION",
                 "target": target,
                 "status": "SIMULATED_SUSPENSION",
-                "details": f"Process '{target}' suspended from CPU scheduling and network sockets severed."
+                "details": f"Simulation only: no process '{target}' was suspended and no sockets were changed."
             }
         elif action_type == "NETWORK_ISOLATION":
             return {
                 "action": "NETWORK_ISOLATION",
                 "target": target,
-                "status": "CONTAINED",
-                "details": f"All outbound network routes for adapter/process '{target}' blocked via local packet filter."
+                "status": "SIMULATED_NETWORK_ISOLATION",
+                "details": f"Simulation only: no network routes or packet filters for '{target}' were changed."
             }
         return {"error": f"Unsupported containment action: {action_type}"}
 

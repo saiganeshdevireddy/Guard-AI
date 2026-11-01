@@ -26,7 +26,8 @@ def test_phishing_agent_detection():
     agent = PhishingDetectionAgent()
     # 1. Legitimate URL
     clean = agent.analyze_url("https://www.google.com")
-    assert clean["classification"] == "SAFE"
+    assert clean["classification"] == "NO_KNOWN_INDICATORS"
+    assert "does not establish" in clean["verdict_scope"]
     assert clean["score"] < 25
 
     # 2. Typosquatting of paypal
@@ -110,8 +111,9 @@ def test_controller_threat_orchestration():
     assert threat.severity == "CRITICAL"
     # Verify Defence vault was auto-locked
     assert controller.defence.is_vault_locked is True
-    # Verify Offence emergency lockdown was engaged
-    assert controller.offence.lockdown_level == "HEIGHTENED"
+    # Critical detections do not self-approve a high-impact emergency action.
+    assert controller.offence.lockdown_level == "STANDARD"
+    assert threat.status == "AWAITING_OPERATOR_REVIEW"
 
 
 def test_informer_voice_briefing():

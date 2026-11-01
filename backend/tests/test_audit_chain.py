@@ -45,3 +45,40 @@ def test_tamper_detection_on_database_modification():
     assert report["valid"] is False
     assert report["compromised_id"] == b1.id
     assert "Hash integrity failure" in report["message"]
+
+
+def test_audit_chain_detects_interior_deletion():
+    db = get_test_db()
+    first = AuditChainService.record_event(db, "test", "ONE", {"n": 1})
+    middle = AuditChainService.record_event(db, "test", "TWO", {"n": 2})
+    AuditChainService.record_event(db, "test", "THREE", {"n": 3})
+    db.delete(middle)
+    db.commit()
+    report = AuditChainService.verify_integrity(db)
+    assert report["valid"] is False
+    assert report["compromised_id"] is not None
+
+
+def test_audit_chain_detects_reordered_links():
+    db = get_test_db()
+    first = AuditChainService.record_event(db, "test", "ONE", {"n": 1})
+    second = AuditChainService.record_event(db, "test", "TWO", {"n": 2})
+    original_first_id, original_second_id = first.id, second.id
+    first.id = 999
+    db.flush()
+    second.id = original_first_id
+    db.flush()
+    first.id = original_second_id
+    db.commit()
+    report = AuditChainService.verify_integrity(db)
+    assert report["valid"] is False
+
+
+def test_audit_chain_cannot_detect_deleted_tail_without_external_checkpoint():
+    db = get_test_db()
+    AuditChainService.record_event(db, "test", "ONE", {"n": 1})
+    last = AuditChainService.record_event(db, "test", "TWO", {"n": 2})
+    db.delete(last)
+    db.commit()
+    # A local hash chain has no trusted reference to the removed final block.
+    assert AuditChainService.verify_integrity(db)["valid"] is True

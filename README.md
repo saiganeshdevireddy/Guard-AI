@@ -1,112 +1,94 @@
-# Guard AI — Autonomous Multi-Agent Cyber Defence & Privacy Platform
+# Guard AI
 
-[![FastAPI](https://img.shields.io/badge/Backend-FastAPI_0.110-009688?logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com)
-[![React](https://img.shields.io/badge/Frontend-React_18_+_Vite-61DAFB?logo=react&logoColor=black)](https://react.dev)
-[![Cryptography](https://img.shields.io/badge/Security-AES--256--GCM_+_PBKDF2-blueviolet)](https://cryptography.io)
-[![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white)](https://python.org)
-[![Tests](https://img.shields.io/badge/Tests-21_Passed-brightgreen)](docs/ROADMAP.md)
+Guard AI is a local cybersecurity prototype with a React dashboard, FastAPI service, SQLite event history, heuristic scanners, and an encrypted vault. Its agent modules coordinate in one backend process. It is not a complete antivirus product, and it does not currently provide native Windows or Android protection.
 
-**Guard AI** is a multi-agent cybersecurity and privacy platform built for Windows computers and Android mobile devices. It autonomously detects threats, secures sensitive data with layered authenticated encryption, coordinates defensive incident responses, and explains security alerts through voice and visual interfaces.
+## What works in this prototype
 
----
+- Rule-based URL, message, file-byte, and user-submitted Wi-Fi posture analysis.
+- SQLite persistence for threat events, vault metadata, and the tamper-evident audit chain.
+- Vault encryption using AES-256-GCM, PBKDF2-HMAC-SHA256, and separated HKDF keys.
+- Local incident review, explicit operator confirmation, and reversible in-app incident mode.
+- Static file byte preview and local URL review. Remote pages are not fetched or rendered.
+- Informer summaries and browser speech synthesis when supported by the browser.
+- A three-way Dark, Light, and System theme selector that remembers the user's choice.
+- A clearly labelled Android demo workflow. Its telemetry and lock flag are in-memory examples only.
 
-## Key Highlights
+The scanners use heuristics. A low score does not prove that a URL, file, message, or network is safe. The audit chain can reveal changes within retained records; it is not immutable storage and cannot independently prove that its latest records were not deleted.
 
-- **Autonomous Multi-Agent Architecture**:
-  * **Controller AI**: Central coordinator, threat severity calculator (0–100 -> LOW, MEDIUM, HIGH, CRITICAL), permissions engine.
-  * **Finder AI**: Discovers threat vectors across URLs, files, network profiles, and text communications.
-  * **Defence AI**: Oversees the Cryptographic Maze vault and enforces auto-locking policies upon elevated threat detection.
-  * **Offence AI (Strictly Defensive)**: Rapid containment, quarantine management, and simulated network/process isolation with human approval gating.
-  * **Informer AI**: Voice-based security briefing generator (Web Speech API) translating technical events into 3 plain-language explanations: *What happened*, *Why it matters*, *Recommended action*.
-  * **6 Specialized Detection Agents**: Wi-Fi Security, Browser Safety, Phishing/Typosquatting, File Entropy & Signatures, Application Behavior, and Spam/Scam Detection.
+## Requirements
 
-- **Cryptographic Maze Security**:
-  * Authenticated Encryption with Associated Data (AEAD) using `AES-256-GCM`.
-  * `PBKDF2-HMAC-SHA256` key derivation with **600,000 iterations** (exceeding OWASP baselines).
-  * `HKDF` key separation: independent sub-keys for metadata, body payload, and disaster recovery.
-  * Offline disaster recovery envelope via Fernet dual-wrapping.
+- Windows 10/11, Python 3.11+, and Node.js 18+.
+- PowerShell for the commands below.
+- No Android SDK is needed because there is no native Android application in this repository.
 
-- **Tamper-Evident Blockchain Audit Ledger**:
-  * Every scan, encryption, lock, and incident is sealed in a continuous SHA-256 hash chain:
-    $$\text{Block Hash} = \text{SHA-256}(\text{Prev Hash} \parallel \text{Timestamp} \parallel \text{Actor} \parallel \text{Event Type} \parallel \text{Payload Hash})$$
-  * Built-in integrity verification engine flags any modified or deleted database records.
+## Install and run
 
-- **Isolated Browsing Environment**:
-  * Safe preview container stripping executable `<script>` tags, inline event handlers, and active payloads.
-  * Security header audit (CSP, HSTS, X-Frame-Options, X-Content-Type-Options).
+From the Guard AI repository root:
 
-- **Hybrid AI Architecture with Strict Local Privacy**:
-  * Default 100% offline local rule and heuristic evaluation.
-  * Zero sensitive file or credential transmission to the cloud.
-  * Automatic PII redaction (email, IPs, tokens) before any optional cloud intelligence query.
-
-- **Cross-Platform Boundaries**:
-  * Windows native APIs & process monitoring.
-  * Android companion synchronization API without claiming silent, unrestricted OS monitoring.
-
----
-
-## Project Structure
-
-```
-Guard AI/
-├── backend/
-│   ├── app/
-│   │   ├── main.py                     # FastAPI application entry & lifespans
-│   │   ├── config.py                   # Settings & privacy mode configuration
-│   │   ├── database.py                 # SQLite ORM models & session
-│   │   ├── core/
-│   │   │   ├── crypto_maze.py          # Layered AES-256-GCM AEAD encryption
-│   │   │   ├── audit_chain.py          # Tamper-evident blockchain hash ledger
-│   │   │   └── permissions.py          # Role matrix & human approval gating
-│   │   ├── agents/
-│   │   │   ├── base.py                 # Base agent & pub/sub event bus
-│   │   │   ├── controller.py           # Central orchestrator
-│   │   │   ├── finder.py               # Threat discovery coordinator
-│   │   │   ├── defence.py              # Vault security & data segmentation
-│   │   │   ├── offence.py              # Defensive emergency containment
-│   │   │   ├── informer.py             # Voice briefings & plain English summaries
-│   │   │   └── specialized/            # 6 specialized neural detectors
-│   │   ├── routers/                    # Clean modular REST API routers
-│   │   └── services/                   # Hybrid AI & isolated sandbox engine
-│   ├── tests/                          # 21 automated pytest test suites
-│   ├── requirements.txt                # Python backend dependencies
-│   └── run_backend.py                  # Backend startup launcher
-├── frontend/
-│   ├── src/
-│   │   ├── App.jsx                     # Dashboard coordinator & telemetry bar
-│   │   ├── index.css                   # Cyber glassmorphic design system
-│   │   ├── components/                 # UI panels (AgentGrid, Scanner, Vault, etc.)
-│   │   └── services/                   # API client & Web Speech voice engine
-│   └── package.json                    # React + Vite configuration
-├── docs/                               # Architecture, Roadmap & Beginner Guide
-└── README.md
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r backend\requirements.txt
 ```
 
----
+Start the backend in one PowerShell window:
 
-## Quickstart
-
-### 1. Launch Backend:
 ```powershell
 .venv\Scripts\python.exe backend\run_backend.py
 ```
-*API running at `http://127.0.0.1:8000` (Swagger docs at `/docs`)*
 
-### 2. Launch Frontend:
+Start the frontend in a second window:
+
 ```powershell
 cd frontend
+npm ci
 npm run dev
 ```
-*Dashboard running at `http://localhost:5173`*
 
-### 3. Run Automated Tests:
+Open `http://127.0.0.1:5173`. The API and interactive documentation are at `http://127.0.0.1:8000` and `http://127.0.0.1:8000/docs`.
+
+To run the backend tests:
+
 ```powershell
-.venv\Scripts\pytest.exe backend\tests -v
+Push-Location backend
+..\.venv\Scripts\python.exe -m pytest tests -q
+Pop-Location
 ```
 
----
+## Configuration
 
-## Development Roadmap (V0.1 — V1.0)
+`backend/app/config.py` uses these optional process environment variables:
 
-All phases from V0.1 to V1.0 have been fully implemented, integrated, and verified through automated test suites. Review [docs/ROADMAP.md](docs/ROADMAP.md) for detailed breakdown.
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `GUARD_AI_DATABASE_URL` | SQLite file under `backend/app/data` | Select a SQLAlchemy database URL. |
+| `GUARD_AI_CORS_ORIGINS` | Local Vite and preview origins | Comma-separated frontend origins allowed by CORS. |
+| `GUARD_AI_MAX_UPLOAD_BYTES` | 10 MiB | Maximum uploaded file size for static inspection. |
+
+`.env.example` is a reference template. The application does not load `.env` files automatically; set variables in the process environment before starting the backend. Cloud inference is not configured or available. Do not add passwords, tokens, or production credentials to the repository.
+
+## API areas
+
+- `/api/health`: backend and database connection status.
+- `/api/v1/agents`: in-process agent status and event bus history.
+- `/api/v1/scan`: URL, file, text, and supplied network-data analysis.
+- `/api/v1/vault`: encrypted item lifecycle and recovery envelope creation.
+- `/api/v1/audit`: audit entries and chain verification.
+- `/api/v1/emergency`: local incident mode, operator approval, and simulated containment.
+- `/api/v1/sandbox`: local URL review and static file-byte preview.
+- `/api/v1/android`: labelled demonstration telemetry and simulated lock state.
+
+## Security and platform limits
+
+- The backend binds to `127.0.0.1`; keep it local. The API has no user authentication and is not suitable for deployment on a public or shared network.
+- CORS is restricted to the local development and preview origins by default.
+- File scans inspect uploaded bytes only; they do not scan the whole disk or move the original file.
+- URL checks are local heuristics. The prototype does not fetch remote pages, inspect live response headers, or provide browser isolation.
+- The Windows process agent analyzes caller-supplied process metadata; it does not monitor Windows processes.
+- Wi-Fi checks analyze values supplied by the user; they do not enumerate nearby networks.
+- Emergency mode changes Guard AI's local state and audit history. OS, process, adapter, and network containment are simulations and require native integrations that are not included.
+- Android information is marked demonstration data; no pairing, Android app, background service, or remote lock channel exists.
+- Cloud AI and external threat-intelligence providers are not connected. Detection and explanation stay local.
+
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), and [docs/ROADMAP.md](docs/ROADMAP.md) for implementation details and limitations.

@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from app.agents.base import BaseAgent, event_bus
+from app.config import settings
 
 KNOWN_MALICIOUS_HASHES = {
     # Sample real malware signatures (WannaCry, Emotet, Locky reference hashes)
@@ -88,8 +89,30 @@ class FileSecurityAgent(BaseAgent):
     def _on_file_scan_request(self, event):
         filepath = event.payload.get("filepath")
         if filepath and os.path.exists(filepath):
-            with open(filepath, "rb") as f:
-                content = f.read()
+            try:
+                if os.path.getsize(filepath) > settings.MAX_UPLOAD_BYTES:
+                    self.emit_event(
+                        event_type="FILE_ANALYSIS_REJECTED",
+                        payload={"reason": "File exceeds configured static-inspection size limit."},
+                        severity="WARNING",
+                    )
+                    return
+                with open(filepath, "rb") as f:
+                    content = f.read(settings.MAX_UPLOAD_BYTES + 1)
+                if len(content) > settings.MAX_UPLOAD_BYTES:
+                    self.emit_event(
+                        event_type="FILE_ANALYSIS_REJECTED",
+                        payload={"reason": "File exceeded the size limit while being read."},
+                        severity="WARNING",
+                    )
+                    return
+            except OSError:
+                self.emit_event(
+                    event_type="FILE_ANALYSIS_REJECTED",
+                    payload={"reason": "File could not be read for static inspection."},
+                    severity="WARNING",
+                )
+                return
             filename = Path(filepath).name
             result = self.analyze_bytes(content, filename)
             self.emit_event(

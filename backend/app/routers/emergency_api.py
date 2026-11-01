@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from app.agents.controller import controller_ai
 from app.database import EmergencyStatus, QuarantineRecord, get_db
+from app.security.auth import require_permission
 
 router = APIRouter(prefix="/emergency", tags=["Emergency Response"])
 
@@ -29,7 +30,7 @@ class SimulateContainmentRequest(BaseModel):
 
 
 @router.get("/status")
-def get_emergency_status(db: Session = Depends(get_db)):
+def get_emergency_status(db: Session = Depends(get_db), _user=Depends(require_permission("emergency:read"))):
     """Returns the current defensive lockdown level and active containment actions."""
     status = db.query(EmergencyStatus).filter_by(id=1).first()
     return {
@@ -43,7 +44,7 @@ def get_emergency_status(db: Session = Depends(get_db)):
 
 
 @router.post("/activate")
-def activate_lockdown(req: ActivateLockdownRequest, db: Session = Depends(get_db)):
+def activate_lockdown(req: ActivateLockdownRequest, db: Session = Depends(get_db), _user=Depends(require_permission("emergency:write"))):
     """Activates heightened or full containment mode. High impact requires operator confirmation."""
     res = controller_ai.offence.activate_emergency_lockdown(
         db=db,
@@ -59,13 +60,16 @@ def activate_lockdown(req: ActivateLockdownRequest, db: Session = Depends(get_db
 
 
 @router.post("/reset")
-def reset_lockdown(req: ResetLockdownRequest, db: Session = Depends(get_db)):
+def reset_lockdown(req: ResetLockdownRequest, db: Session = Depends(get_db), _user=Depends(require_permission("emergency:write"))):
     """Resets containment back to normal standard operating status."""
-    return controller_ai.offence.reset_emergency_lockdown(db=db, human_confirmed=req.human_confirmed)
+    result = controller_ai.offence.reset_emergency_lockdown(db=db, human_confirmed=req.human_confirmed)
+    if not result["success"]:
+        raise HTTPException(status_code=403, detail=result["error"])
+    return result
 
 
 @router.get("/quarantine")
-def list_quarantine_records(db: Session = Depends(get_db)):
+def list_quarantine_records(db: Session = Depends(get_db), _user=Depends(require_permission("emergency:read"))):
     """Lists all files and artifacts currently held in isolated quarantine storage."""
     records = db.query(QuarantineRecord).order_by(QuarantineRecord.id.desc()).all()
     return {
@@ -86,6 +90,6 @@ def list_quarantine_records(db: Session = Depends(get_db)):
 
 
 @router.post("/simulate-containment")
-def simulate_containment(req: SimulateContainmentRequest):
+def simulate_containment(req: SimulateContainmentRequest, _user=Depends(require_permission("emergency:write"))):
     """Safely simulates process suspension or network cutoff in a controlled sandbox."""
     return controller_ai.offence.simulate_containment_action(req.action_type, req.target)

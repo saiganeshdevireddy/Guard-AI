@@ -85,7 +85,7 @@ class InformerAI(BaseAgent):
             )
             what = f"Finder AI identified phishing indicators in the link '{indicator}'."
             impact = "Visiting this site could trick you into entering passwords or downloading malicious files."
-            action = "Close the browser tab. Guard AI has quarantined the link from automatic opening."
+            action = "Do not open the link. Review the indicators before deciding what to do next."
 
         elif category == "FILE":
             spoken = (

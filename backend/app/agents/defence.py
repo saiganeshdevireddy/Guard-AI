@@ -202,6 +202,10 @@ class DefenceAI(BaseAgent):
             "instructions": "Store the recovery key in an isolated physical vault or offline medium."
         }
 
+    def restore_escrow_backup(self, recovery_key: str, encrypted_token: str) -> str:
+        """Restores a user-held recovery envelope; inputs are not logged or persisted."""
+        return crypto_maze.restore_from_recovery_token(recovery_key, encrypted_token)
+
     def handle_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         action = message.get("action")
         db = SessionLocal()

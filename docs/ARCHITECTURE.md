@@ -1,80 +1,75 @@
-# Guard AI System Architecture & Security Specifications
+# Guard AI architecture
 
-Guard AI is an autonomous, multi-agent cybersecurity and privacy platform engineered for Windows computers and Android companion devices.
+## Runtime
 
----
-
-## 1. Multi-Agent Ecosystem
-
-```
-                          ┌──────────────────────┐
-                          │    Controller AI     │
-                          │(Central Orchestrator)│
-                          └──────────┬───────────┘
-                                     │ Event Bus
-         ┌───────────────────────────┼───────────────────────────┐
-         │                           │                           │
-┌────────┴────────┐         ┌────────┴────────┐         ┌────────┴────────┐
-│    Finder AI    │         │   Defence AI    │         │   Offence AI    │
-│(Threat Discovery│         │ (Crypto Vault)  │         │ (Emergency Res) │
-└────────┬────────┘         └─────────────────┘         └─────────────────┘
-         │
-         ├── Phishing & Typosquatting Agent
-         ├── Static File Security Agent (Entropy & YARA)
-         ├── Wi-Fi & Rogue AP Detection Agent
-         ├── Browser Security & Isolated Preview Agent
-         ├── Application Behaviour Monitoring Agent
-         └── Spam & Social Engineering Detection Agent
+```text
+React + Vite dashboard
+        │ local HTTP API
+        ▼
+FastAPI on 127.0.0.1:8000
+  ├─ Controller and in-process event bus
+  ├─ Rule-based Finder agents
+  ├─ Vault, audit, incident, and demo endpoints
+  └─ SQLAlchemy → SQLite (default)
 ```
 
-### Agent Roles & Guardrails:
-1. **Controller AI**:
-   - Central coordinator maintaining agent heartbeats, routing messages, and calculating normalized threat scores (0–100 -> LOW, MEDIUM, HIGH, CRITICAL).
-   - Enforces role-based permissions matrix before executing operations.
-2. **Finder AI**:
-   - Manages the 6 specialized detection agents. Synthesizes composite risk evaluations.
-3. **Defence AI**:
-   - Oversees the Cryptographic Maze vault.
-   - Seals the vault and flushes plaintext credentials from volatile memory when threats escalate.
-4. **Offence AI (Strictly Defensive)**:
-   - Activates heightened or full containment mode.
-   - Manages quarantined files in `data/quarantine/`.
-   - Mandatory human approval for high-impact actions (simulated network cut-off / process termination).
-5. **Informer AI**:
-   - Generates natural, spoken briefings for the frontend Web Speech API.
-   - Translates raw technical indicators into a 3-part plain-language summary:
-     * *What was detected*
-     * *Why it matters*
-     * *Recommended action*
-   - Strictly does not auto-report incidents to external authorities.
+The Vite development server proxies `/api` to the local FastAPI service. The backend is bound to loopback. Protected API routes require configured bearer authentication; health and token exchange are public. The frontend does not yet send tokens, and the backend must not be exposed on a shared or public network until that integration and further production controls are completed.
 
----
+## Agent roles
 
-## 2. Cryptographic Maze Security
+- **Controller AI** stores scan events, normalizes the severity score, locks the vault session for elevated findings, and marks critical findings for operator review. It does not self-approve emergency mode.
+- **Finder AI** calls local URL, file-byte, Wi-Fi-input, and text heuristics.
+- **Application Behaviour Agent** accepts process metadata from a caller. It starts IDLE and does not observe Windows processes itself.
+- **Defence AI** encrypts vault items and records vault events.
+- **Offence AI** changes local incident state and exposes labelled simulations. It does not terminate processes or isolate network adapters.
+- **Informer AI** creates plain-language summaries; the browser may speak them using Web Speech.
 
-The Cryptographic Maze is a multi-tier layered defense system relying on established cryptographic primitives:
+The event bus and agent objects exist in one Python process. SQLite stores threat and audit records, but not a durable distributed queue or a separate agent service.
 
-- **Key Derivation**: Passphrase + 16-byte cryptographic salt passed through PBKDF2-HMAC-SHA256 with **600,000 iterations** (exceeding OWASP minimums).
-- **Key Separation (HKDF)**: Uses RFC 5869 Extract-and-Expand to derive distinct compartmentalized sub-keys:
-  * `K_header`: For encrypting metadata and access-control tags.
-  * `K_body`: For encrypting sensitive payload.
-  * `K_recovery`: For emergency escrow envelopes.
-- **Authenticated Encryption**: `AES-256-GCM` with a 96-bit unique nonce and 128-bit authentication tag.
-- **Tamper Rejection**: Any alteration to ciphertext or tag raises an immediate authentication exception.
+## Data protection
 
----
+- The vault uses AES-256-GCM with PBKDF2-HMAC-SHA256 and HKDF-derived keys. Each vault item stores its own salt and nonce with ciphertext/tag.
+- The audit ledger hashes payloads and links records using the previous block hash. It detects changes in retained history; it is not immutable storage and cannot detect removal of a trailing suffix without a trusted external checkpoint.
+- The API limits uploaded file inspections to the configured byte limit. Scans inspect bytes only and do not execute or move the original file.
+- Local rules and explanatory text run without cloud requests. The optional cloud provider shown in older documentation was a mock and is not implemented.
+- The remote URL preview fetch was removed from the workflow because a backend fetcher could expose local network resources. URL Review does not retrieve page content or headers.
 
-## 3. Blockchain-Style Tamper-Evident Audit Ledger
+## Integrations not included
 
-- Every system event (scans, logins, threat escalations, vault access) is recorded in a cryptographic hash chain:
-  $$\text{Block Hash} = \text{SHA-256}(\text{Prev Hash} \parallel \text{Timestamp} \parallel \text{Actor} \parallel \text{Event Type} \parallel \text{Payload Hash})$$
-- Modifying, deleting, or injecting an event retroactively breaks the mathematical chain.
-- The `verify_integrity()` engine validates the ledger from Genesis to tip.
+- No Windows service, process enumeration, browser extension, file-system watcher, or network adapter controller exists.
+- No Android app, pairing flow, authentication protocol, background service, or real remote lock exists. The API offers explicitly labelled in-memory demo values only.
+- No threat-intelligence feed, cloud AI provider, external blockchain, or OS-backed key store is configured.
+- Native OS integration would require separately designed permissions, signing, update, pairing, and failure-handling workflows.
+# API authentication boundary
 
----
+The FastAPI service issues HS256 JWTs using PyJWT and verifies passwords with
+pwdlib's recommended Argon2id implementation. There are no default users or
+default signing keys. Users and their hashes are provisioned out of band;
+short-lived token IDs are stored in the database for persistent revocation.
+Agent, scanner, Vault, Audit Ledger, emergency, sandbox, and Android routes
+require server-side role permissions. Health and credential exchange are the
+only public routes. CORS is a browser-origin policy and is not authentication.
 
-## 4. Isolated Browsing & File Sandbox
+The frontend signs in through `POST /api/auth/token`, keeps the short-lived JWT
+in JavaScript memory only, sends it in the `Authorization: Bearer` header, and
+calls `POST /api/auth/revoke` at sign-out. Reloading clears the token and
+requires sign-in. An API 401 clears the local session; a 403 keeps the session
+and displays a permission denial. Tokens and passwords are not written to
+localStorage, sessionStorage, URLs, or application logs.
 
-- Renders untrusted web destinations with all `<script>` tags, inline event handlers (`onload`, `onerror`), and `javascript:` URIs stripped.
-- Restricts iframes with `sandbox="allow-same-origin"` to prevent drive-by script execution.
-- Displays explicit operational disclaimers acknowledging that sandboxing mitigates risks but does not replace complete hardware air-gapping.
+HttpOnly cookie authentication was evaluated but is not supported by the
+current FastAPI contract: it returns a bearer token in JSON, accepts bearer
+headers, sets no session cookie, and has no CSRF token or origin-bound CSRF
+validation. The current integration therefore uses transient in-memory bearer
+tokens, which remain exposed to same-origin script compromise. A cookie design
+requires a coordinated backend change to set Secure/HttpOnly/SameSite cookies,
+validate CSRF tokens and request origins, configure credentialed CORS for
+explicit origins, and revoke/expire sessions. Do not enable credentialed CORS
+alone as a substitute for CSRF protection.
+
+The API CORS allowlist permits the `Authorization` request header for
+configured origins. CORS remains a browser-origin control, never
+authentication. This prototype does not yet include MFA, delegated identity,
+automated account lifecycle, login rate limiting, refresh-token rotation, or a
+distributed revocation store. Do not expose it as production-ready on the basis
+of this prototype authentication layer alone.

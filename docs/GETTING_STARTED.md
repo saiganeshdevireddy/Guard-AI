@@ -1,68 +1,89 @@
-# Getting Started with Guard AI
+# Run Guard AI on Windows
 
-Welcome to **Guard AI**! This guide is written in beginner-friendly language to help you run and test the complete system on your Windows machine.
+## Install dependencies
 
----
+Open PowerShell in the repository root:
 
-## 1. Quick Requirements
+```powershell
+py -3.11 -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+python -m pip install -r backend\requirements.txt
+```
 
-- **Python 3.11+**
-- **Node.js 18+** & npm
+In another PowerShell window, install frontend packages:
 
----
+```powershell
+cd frontend
+npm ci
+```
 
-## 2. Running the Backend Server (FastAPI)
+## Start the app
 
-1. Open PowerShell in your project folder (`C:\Users\Administrator\Desktop\Guard AI`).
-2. Run the backend startup script using the virtual environment:
+From the repository root, start the backend:
 
 ```powershell
 .venv\Scripts\python.exe backend\run_backend.py
 ```
 
-The backend starts at:
-- **API Server:** `http://127.0.0.1:8000`
-- **Interactive Swagger Documentation:** `http://127.0.0.1:8000/docs`
-
----
-
-## 3. Running the Frontend Dashboard (React + Vite)
-
-1. Open a second PowerShell window in your project folder.
-2. Change directory into `frontend`:
+Start the frontend in the second window:
 
 ```powershell
-cd frontend
 npm run dev
 ```
 
-3. Open your browser and navigate to:
-```
-http://localhost:5173
-```
+Open `http://127.0.0.1:5173`. The API health response is at `http://127.0.0.1:8000/api/health`; interactive endpoint docs are at `http://127.0.0.1:8000/docs`.
 
----
+## Run tests
 
-## 4. Running the Automated Test Suite
-
-Guard AI includes 21 automated tests covering every agent, cryptographic encryption, tamper detection, and API endpoints.
-
-To run the test suite:
+From the repository root:
 
 ```powershell
-.venv\Scripts\pytest.exe backend\tests -v
+Push-Location backend
+..\.venv\Scripts\python.exe -m pytest tests -q
+Pop-Location
 ```
 
-All tests should pass with code 0!
+## Configuration
 
----
+See `.env.example` for the supported backend environment variable names. The app does not read `.env` files automatically. For example, set a custom CORS list in PowerShell before starting the backend:
 
-## 5. Exploring Features in the Dashboard
+```powershell
+$env:GUARD_AI_CORS_ORIGINS = 'http://127.0.0.1:5173'
+```
 
-- **⚡ Multi-Agent Matrix**: Observe Controller AI, Finder AI, Defence AI, Offence AI, Informer AI, and the 6 specialized neural detectors.
-- **🎯 Threat Scanner**: Test a URL (e.g. `http://paypal-security-update.xyz`), a file, or text for phishing and malware heuristics.
-- **🔐 Cryptographic Vault**: Enter a master passphrase to encrypt and seal confidential credentials using AES-256-GCM.
-- **🧪 Isolated Sandbox**: Enter any URL to safely view its rendered layout with scripts and active trackers blocked.
-- **🚨 Emergency Response**: Test defensive containment activation with human operator approval gating.
-- **⛓️ Blockchain Ledger**: Click **"Verify Cryptographic Integrity"** to validate the SHA-256 hash chain.
-- **📱 Android Companion**: View device pairing telemetry and test the remote defensive lock command.
+The default database is created beneath `backend/app/data`. Cloud inference, Windows OS monitoring, and a real Android companion are not enabled.
+
+## Themes and device notes
+
+Choose **Dark**, **Light**, or **System** in the top navigation. The selected preference is saved in local storage; System follows Windows/browser appearance settings. Both themes apply across dashboard panels.
+
+The Android screen uses sample values labelled as a demonstration; its lock control changes only backend memory. The emergency response buttons change local Guard AI state or display simulations, not Windows or network state.
+# API authentication (required for protected routes)
+
+Guard AI has no default account. Protected API routes return `503` until an
+authentication secret and at least one active Argon2id account are configured.
+Generate a random signing secret out of band (at least 32 random bytes), then
+provision an account interactively from the backend directory:
+
+```powershell
+python -m app.security.auth --provision-user
+```
+
+Store the generated JSON user entry in the secret environment variable
+`GUARD_AI_AUTH_USERS`, and set `GUARD_AI_AUTH_TOKEN_SECRET` and
+`GUARD_AI_AUTH_TOKEN_TTL_SECONDS` (60–3600 seconds). Do not put real values in
+`.env.example`, source control, frontend `VITE_*` variables, or build output.
+The token endpoint is `POST /api/auth/token`; send its short-lived bearer token
+in the `Authorization` header. `POST /api/auth/revoke` revokes that token
+persistently. Roles (`admin`, `operator`, `analyst`, `viewer`) are enforced on
+the server. Deactivate a user by setting its configured `active` field to
+`false`.
+
+The frontend now provides sign-in and sign-out, holds the short-lived bearer
+token in memory only, and clears local authentication on token expiry or an
+API `401`. An API `403` is shown as a permission denial while keeping the
+session active. Reloading the page requires a new sign-in. The current backend
+does not support HttpOnly cookie sessions or CSRF tokens, so the frontend does
+not pretend to use them; see the authentication boundary in
+`docs/ARCHITECTURE.md` for the tradeoff and required backend work.

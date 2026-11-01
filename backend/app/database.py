@@ -51,7 +51,7 @@ class ThreatEvent(Base):
 
 
 class AuditEntry(Base):
-    """Tamper-evident blockchain-style hash ledger for immutable security auditing."""
+    """Tamper-evident hash ledger for local security event history."""
     __tablename__ = "audit_entries"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -64,6 +64,30 @@ class AuditEntry(Base):
     block_hash = Column(String(64), unique=True, index=True)  # SHA-256(prev_hash + timestamp + actor + event_type + payload_hash)
     signature = Column(String(128), default="GUARD_AI_VERIFIED")
     verified = Column(Boolean, default=True)
+
+
+class BlockchainAnchor(Base):
+    """Receipt reference for a hash anchored to a configured local EVM chain."""
+    __tablename__ = "blockchain_anchors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    audit_entry_id = Column(Integer, nullable=False, unique=True, index=True)
+    chain_id = Column(Integer, nullable=True)
+    contract_address = Column(String(64), nullable=True)
+    transaction_hash = Column(String(80), nullable=True)
+    status = Column(String(16), nullable=False, default="PENDING", index=True)
+    retry_count = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    anchored_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class RevokedToken(Base):
+    """Persistent denylist of JWT identifiers until each token expires."""
+    __tablename__ = "revoked_tokens"
+
+    jti = Column(String(128), primary_key=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class VaultItem(Base):

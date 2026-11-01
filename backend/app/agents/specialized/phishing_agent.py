@@ -164,7 +164,7 @@ class PhishingDetectionAgent(BaseAgent):
             indicators.append(f"High domain entropy ({entropy:.2f}), possible DGA (domain generation algorithm)")
 
         final_score = min(score, 100)
-        classification = "SAFE"
+        classification = "NO_KNOWN_INDICATORS"
         if final_score >= 70:
             classification = "CRITICAL_PHISHING"
         elif final_score >= 40:
@@ -177,6 +177,7 @@ class PhishingDetectionAgent(BaseAgent):
             "hostname": hostname,
             "score": final_score,
             "classification": classification,
+            "verdict_scope": "Heuristic only. A low score does not establish that the URL is safe.",
             "indicators": indicators if indicators else ["No suspicious phishing markers identified"],
             "entropy": round(entropy, 2),
         }

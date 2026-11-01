@@ -1,14 +1,21 @@
-# Guard AI — Engineering Roadmap & Implementation Status
+# Guard AI implementation status
 
-| Version | Phase Description | Status | Verification |
-| :--- | :--- | :--- | :--- |
-| **V0.1** | Architecture Blueprint, FastAPI + SQLite backend, React + Vite frontend foundation | ✅ **Implemented & Tested** | `app/main.py`, `npm run build` passing |
-| **V0.2** | Controller AI & Multi-Agent Event Bus communication protocol | ✅ **Implemented & Tested** | `test_controller_threat_orchestration` |
-| **V0.3** | Finder AI & Specialized Detectors (URL, Phishing, File, Spam, Wi-Fi) | ✅ **Implemented & Tested** | `test_phishing_agent_detection`, `test_file_agent_detection` |
-| **V0.4** | Defence AI & Cryptographic Maze (AES-256-GCM, 600K PBKDF2, Key Separation) | ✅ **Implemented & Tested** | `test_encryption_and_decryption_success`, `test_tampered_ciphertext_detection` |
-| **V0.5** | Informer AI Voice Assistant & Plain-Language Incident Translator | ✅ **Implemented & Tested** | `test_informer_voice_briefing`, Web Speech API |
-| **V0.6** | Offence AI Defensive Emergency Response (Containment, Quarantine, Approval Gating) | ✅ **Implemented & Tested** | Human approval gate enforced in permissions |
-| **V0.7** | Wi-Fi & Network Security Analysis (Rogue AP, Evil Twin, DNS anomaly checks) | ✅ **Implemented & Tested** | `test_wifi_agent_security_audit` |
-| **V0.8** | Isolated Browsing Environment & Safe Static File Sandbox | ✅ **Implemented & Tested** | Scripts stripped, DOM sanitized, hex bytecode viewer |
-| **V0.9** | Hybrid AI Architecture (Local Heuristics + Cloud AI with Strict Privacy Mode) | ✅ **Implemented & Tested** | Zero PII egress guarantee in `hybrid_ai.py` |
-| **V1.0** | Unified Windows & Android Cross-Platform Prototype | ✅ **Implemented & Tested** | 21/21 Pytest Suite passing, Android companion API active |
+This table describes what this repository currently contains. It does not claim complete endpoint or operating-system protection.
+
+| Area | Current state | Limits |
+| --- | --- | --- |
+| React dashboard | Implemented with Dark, Light, and System themes, saved preference, responsive styles, and backend status polling. | Some pages depend on a running local API; browser speech depends on browser support. |
+| Controller and agents | Implemented in one FastAPI process with an in-memory event bus and persisted threat events. Includes URL, file, Wi-Fi-input, text, and caller-supplied process-metadata analyzers. | No background heartbeat service or direct OS/browser/network monitoring. The app monitor starts IDLE. |
+| SQLite persistence | Threat events, vault items, agent state, emergency state, and audit records use SQLAlchemy models. | SQLite is the default; no migration framework or multi-user model is included. |
+| URL and message analysis | Local deterministic heuristics with an uncertainty disclaimer. | Not a reputation service or a proof that an item is safe. No cloud threat intelligence. |
+| File analysis | Uploaded files get bounded static byte inspection and heuristic checks. | No disk-wide scanning, malware execution sandbox, or automatic quarantine from the scan endpoint. |
+| Cryptographic vault | AES-GCM encryption and passphrase-derived keys are implemented. | Passphrases are caller-supplied; this is not an OS-backed keystore. Application memory and local database access are not protected from a compromised host. |
+| Audit ledger | SHA-256 hash chain with verification endpoint. | Local database chain is tamper-evident, not immutable. Deleting a final suffix cannot be detected without an external anchor. |
+| Emergency response | Explicit confirmation gates local incident mode; containment demonstration endpoints are labelled simulations. | No process termination or network isolation is implemented. |
+| Isolated browser | Not implemented. URL Review does not fetch or render remote content. | Use a disposable VM or separately isolated browser for suspicious pages. |
+| Android companion | A labelled in-memory demonstration workflow is available. | No native application, pairing/authentication protocol, live telemetry, or device lock command. |
+| Cloud AI | Not configured; summaries remain local. | No provider integration or outbound AI request is implemented. |
+
+## Verification status
+
+The repository contains 24 pytest cases for scanners, agent decisions, API workflows, vault crypto, and audit integrity. They must be run locally with the instructions in [GETTING_STARTED.md](GETTING_STARTED.md). Do not treat the README's earlier test badge or historical pass claims as current test results.

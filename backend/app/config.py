@@ -15,16 +15,33 @@ class Settings(BaseModel):
     API_V1_STR: str = "/api/v1"
     
     # Database
-    DATABASE_URL: str = f"sqlite:///{DATA_DIR / 'guard_ai.db'}"
+    DATABASE_URL: str = os.getenv("GUARD_AI_DATABASE_URL", f"sqlite:///{DATA_DIR / 'guard_ai.db'}")
     
     # Security & Cryptography
-    SECRET_KEY: str = os.getenv("GUARD_AI_SECRET_KEY", "guard-ai-secure-master-secret-key-32b!")
     VAULT_ITERATIONS: int = 600000  # OWASP recommended minimum for PBKDF2
     
     # Privacy & Hybrid AI Mode
-    LOCAL_ONLY_MODE: bool = True  # Strict privacy: do not transmit sensitive data to cloud
-    CLOUD_AI_PROVIDER: str = "fallback"  # Options: 'fallback', 'gemini', 'openai'
-    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
+    LOCAL_ONLY_MODE: bool = True  # Cloud inference is not implemented in this prototype.
+
+    # HTTP and upload boundaries
+    CORS_ORIGINS: list[str] = [
+        origin.strip()
+        for origin in os.getenv(
+            "GUARD_AI_CORS_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173,http://localhost:4173,http://127.0.0.1:4173",
+        ).split(",")
+        if origin.strip()
+    ]
+    MAX_UPLOAD_BYTES: int = int(os.getenv("GUARD_AI_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+
+    # Optional local Hardhat audit anchoring. Never configured by default.
+    BLOCKCHAIN_RPC_URL: str = os.getenv("GUARD_AI_BLOCKCHAIN_RPC_URL", "")
+    BLOCKCHAIN_CONTRACT_ADDRESS: str = os.getenv("GUARD_AI_BLOCKCHAIN_CONTRACT_ADDRESS", "")
+
+    # Authentication is fail-closed: no default token secret or demo user.
+    AUTH_TOKEN_SECRET: str = os.getenv("GUARD_AI_AUTH_TOKEN_SECRET", "")
+    AUTH_TOKEN_TTL_SECONDS: int = int(os.getenv("GUARD_AI_AUTH_TOKEN_TTL_SECONDS", "900"))
+    AUTH_USERS_JSON: str = os.getenv("GUARD_AI_AUTH_USERS", "[]")
     
     # Agent Communication & Polling
     AGENT_HEARTBEAT_INTERVAL_SEC: int = 5

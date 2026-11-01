@@ -26,8 +26,8 @@ export function EmergencyLockdown({ onStatusChanged }) {
   };
 
   const handleActivate = async (level) => {
-    if (level === 'FULL_CONTAINMENT' && !humanConfirmed) {
-      setError('Full containment mandates checking the explicit human operator confirmation box.');
+    if (!humanConfirmed) {
+      setError('Check the operator approval box before activating incident mode.');
       return;
     }
     setLoading(true);
@@ -73,7 +73,7 @@ export function EmergencyLockdown({ onStatusChanged }) {
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#fff' }}>
+            <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-main)' }}>
               Offence AI Defensive Incident Response
             </h2>
             <span className={`badge ${isEmergency ? 'badge-critical' : 'badge-low'}`}>
@@ -81,12 +81,12 @@ export function EmergencyLockdown({ onStatusChanged }) {
             </span>
           </div>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Strictly defensive emergency containment, quarantine management, and recovery coordination
+            Local incident status and simulated containment actions. No OS or network isolation is performed.
           </p>
         </div>
 
         {isEmergency ? (
-          <button onClick={handleReset} disabled={loading} className="btn btn-outline" style={{ color: '#10b981', borderColor: '#10b981' }}>
+          <button onClick={handleReset} disabled={loading} className="btn btn-outline" style={{ color: 'var(--emerald-success)', borderColor: 'var(--emerald-success)' }}>
             <CheckIcon size={16} /> Disengage Containment
           </button>
         ) : (
@@ -97,28 +97,28 @@ export function EmergencyLockdown({ onStatusChanged }) {
       </div>
 
       {error && (
-        <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--crimson-danger)', borderRadius: '6px', color: '#ff6b6b', fontSize: '12px', marginBottom: '16px' }}>
+        <div style={{ padding: '10px 14px', background: 'var(--danger-soft)', border: '1px solid var(--crimson-danger)', borderRadius: '6px', color: 'var(--crimson-danger)', fontSize: '12px', marginBottom: '16px' }}>
           {error}
         </div>
       )}
 
       {/* Human Approval Safeguard Checkbox */}
       <div style={{
-        background: 'rgba(10, 15, 26, 0.65)',
+        background: 'var(--surface-subtle)',
         padding: '14px 18px',
         borderRadius: '8px',
-        border: '1px solid rgba(255, 255, 255, 0.08)',
+        border: '1px solid var(--line-subtle)',
         marginBottom: '20px',
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: '#fff', cursor: 'pointer' }}>
+        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer' }}>
           <input
             type="checkbox"
             checked={humanConfirmed}
             onChange={(e) => setHumanConfirmed(e.target.checked)}
-            style={{ width: '16px', height: '16px', accentColor: '#ef4444' }}
+            style={{ width: '16px', height: '16px', accentColor: 'var(--crimson-danger)' }}
           />
           <span>I authorize Offence AI to enforce high-impact containment (Human Confirmation Gating)</span>
         </label>
@@ -133,7 +133,7 @@ export function EmergencyLockdown({ onStatusChanged }) {
       </div>
 
       {/* Containment Simulation Tool */}
-      <div style={{ borderTop: '1px solid rgba(255, 255, 255, 0.08)', paddingTop: '16px', marginBottom: '20px' }}>
+      <div style={{ borderTop: '1px solid var(--line-subtle)', paddingTop: '16px', marginBottom: '20px' }}>
         <h4 style={{ fontSize: '13px', fontWeight: '600', color: 'var(--text-muted)', marginBottom: '10px' }}>
           Simulated Containment Testing
         </h4>
@@ -154,7 +154,7 @@ export function EmergencyLockdown({ onStatusChanged }) {
           </button>
         </div>
         {simResult && (
-          <div style={{ marginTop: '10px', padding: '10px', background: 'rgba(15, 23, 42, 0.8)', borderRadius: '6px', fontSize: '12px', fontFamily: 'var(--font-mono)', color: '#00f2fe' }}>
+          <div style={{ marginTop: '10px', padding: '10px', background: 'var(--surface-subtle)', borderRadius: '6px', fontSize: '12px', fontFamily: 'var(--font-mono)', color: 'var(--cyan-primary)' }}>
             &bull; {simResult.details} ({simResult.status})
           </div>
         )}
@@ -162,12 +162,12 @@ export function EmergencyLockdown({ onStatusChanged }) {
 
       {/* Quarantined Items List */}
       <div>
-        <h4 style={{ fontSize: '14px', fontWeight: '600', color: '#fff', marginBottom: '10px' }}>
-          Isolated Quarantine Storage ({quarantine.length})
+        <h4 style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text-main)', marginBottom: '10px' }}>
+          Quarantined Files ({quarantine.length})
         </h4>
         {quarantine.length === 0 ? (
           <p style={{ fontSize: '12px', color: 'var(--text-dim)', fontStyle: 'italic' }}>
-            Quarantine vault is empty. No files or processes currently contained.
+            No files have been moved to the local quarantine directory.
           </p>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -176,16 +176,16 @@ export function EmergencyLockdown({ onStatusChanged }) {
                 key={q.id}
                 style={{
                   padding: '10px 14px',
-                  background: 'rgba(10, 15, 26, 0.65)',
+                  background: 'var(--surface-subtle)',
                   borderRadius: '6px',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  border: '1px solid var(--line-subtle)',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
                 }}
               >
                 <div>
-                  <span style={{ fontSize: '13px', fontWeight: '600', color: '#ff6b6b' }}>
+                  <span style={{ fontSize: '13px', fontWeight: '600', color: 'var(--crimson-danger)' }}>
                     {q.target_identifier}
                   </span>
                   <p style={{ fontSize: '11px', color: 'var(--text-dim)' }}>

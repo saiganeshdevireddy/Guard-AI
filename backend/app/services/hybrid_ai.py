@@ -7,7 +7,6 @@ Strictly protects privacy:
 """
 import re
 from typing import Any, Dict, Optional
-from app.config import settings
 
 
 class HybridAIEngine:
@@ -16,8 +15,8 @@ class HybridAIEngine:
     """
 
     def __init__(self):
-        self.local_only = settings.LOCAL_ONLY_MODE
-        self.api_key = settings.GEMINI_API_KEY
+        # No cloud provider is implemented in this prototype; analysis stays local.
+        self.local_only = True
 
     def sanitize_pii(self, text: str) -> str:
         """
@@ -47,25 +46,13 @@ class HybridAIEngine:
         # Always sanitize indicators if cloud assistance were ever engaged
         clean_indicator = self.sanitize_pii(indicator)
 
-        # Deterministic local knowledge synthesizer
-        if self.local_only or not user_opt_in_cloud:
-            return {
-                "mode": "LOCAL_OFFLINE_INTELLIGENCE",
-                "privacy_guaranteed": True,
-                "data_transmitted_external": False,
-                "ai_summary": self._generate_local_ai_explanation(clean_indicator, category, severity),
-                "remediation_steps": self._get_local_remediation(category, severity),
-            }
-
-        # Cloud AI assistance (Mock/Gemini compatible fallback)
         return {
-            "mode": "CLOUD_AI_ASSISTED",
-            "privacy_guaranteed": "PII_REDACTED",
-            "data_transmitted_external": True,
-            "ai_summary": (
-                f"[Cloud Intelligence] Analysis of '{clean_indicator}' indicates a {severity} risk profile in category {category}. "
-                f"Correlated against global threat intelligence vectors."
-            ),
+            "mode": "LOCAL_RULES",
+            "cloud_status": "NOT_CONFIGURED",
+            "privacy_guaranteed": True,
+            "data_transmitted_external": False,
+            "confidence": "heuristic_only",
+            "ai_summary": self._generate_local_ai_explanation(clean_indicator, category, severity),
             "remediation_steps": self._get_local_remediation(category, severity),
         }
 
@@ -82,12 +69,12 @@ class HybridAIEngine:
         base_remediations = {
             "URL": [
                 "Do not enter passwords, credit cards, or personal information on this destination.",
-                "Inspect the destination safely within the Guard AI Isolated Sandbox viewer.",
+                "Do not open suspicious links; this build does not provide an isolated remote browser.",
                 "Clear temporary browser cookies if you accidentally visited the link."
             ],
             "FILE": [
                 "Do not open, execute, or double-click the file outside a sandboxed environment.",
-                "Keep the file in Guard AI quarantine to prevent OS process spawning.",
+                "Keep the original file unopened; this build scans uploaded bytes but does not quarantine files on disk.",
                 "Verify file origin with the purported sender before unblocking."
             ],
             "NETWORK": [

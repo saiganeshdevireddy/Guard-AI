@@ -61,7 +61,7 @@ export function QuickScanner({ onThreatDetected }) {
     <div className="glass-panel" style={{ padding: '24px', marginBottom: '28px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
         <div>
-          <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#fff' }}>Finder AI Threat Scanner</h2>
+          <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-main)' }}>Finder AI Threat Scanner</h2>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
             Real-time heuristic evaluation across web links, binary files, communications, and network profiles
           </p>
@@ -69,7 +69,7 @@ export function QuickScanner({ onThreatDetected }) {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '12px', marginBottom: '18px' }}>
+      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--line-subtle)', paddingBottom: '12px', marginBottom: '18px' }}>
         {[
           { id: 'url', label: 'URL & Phishing' },
           { id: 'file', label: 'Suspicious File' },
@@ -174,16 +174,16 @@ export function QuickScanner({ onThreatDetected }) {
       </form>
 
       {error && (
-        <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--crimson-danger)', borderRadius: '8px', color: '#ff6b6b', fontSize: '13px' }}>
+        <div style={{ marginTop: '16px', padding: '12px', background: 'var(--danger-soft)', border: '1px solid var(--crimson-danger)', borderRadius: '8px', color: 'var(--crimson-danger)', fontSize: '13px' }}>
           Error: {error}
         </div>
       )}
 
       {/* Results View */}
       {result && (
-        <div style={{ marginTop: '20px', padding: '16px', background: 'rgba(10, 15, 26, 0.85)', borderRadius: '8px', border: '1px solid rgba(0, 242, 254, 0.25)' }}>
+        <div style={{ marginTop: '20px', padding: '16px', background: 'var(--surface-subtle)', borderRadius: '8px', border: '1px solid var(--cyan-border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <span style={{ fontSize: '14px', fontWeight: '700', color: '#fff' }}>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-main)' }}>
               Threat Assessment Output: {result.report?.target}
             </span>
             <span className={`badge ${getSeverityBadgeClass(result.report?.severity)}`}>
@@ -191,12 +191,16 @@ export function QuickScanner({ onThreatDetected }) {
             </span>
           </div>
 
+          <p style={{ color: 'var(--amber-warning)', fontSize: '11px', marginBottom: '10px' }}>
+            Results are heuristic only. A low score is not proof that a URL or file is safe.
+          </p>
+
           {/* Indicators List */}
           <div style={{ marginBottom: '14px' }}>
             <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
               Specific Indicators Identified:
             </span>
-            <ul style={{ marginTop: '6px', paddingLeft: '18px', fontSize: '12px', color: '#e2e8f0' }}>
+            <ul style={{ marginTop: '6px', paddingLeft: '18px', fontSize: '12px', color: 'var(--text-main)' }}>
               {result.report?.all_indicators?.map((ind, i) => (
                 <li key={i} style={{ marginBottom: '4px' }}>{ind}</li>
               ))}
@@ -205,16 +209,16 @@ export function QuickScanner({ onThreatDetected }) {
 
           {/* Hybrid AI Intelligence */}
           {result.hybrid_explanation && (
-            <div style={{ padding: '12px', background: 'rgba(15, 23, 42, 0.7)', borderRadius: '6px', borderLeft: '3px solid var(--cyan-primary)' }}>
+            <div style={{ padding: '12px', background: 'var(--surface-subtle)', borderRadius: '6px', borderLeft: '3px solid var(--cyan-primary)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                 <span className="badge badge-cyan" style={{ fontSize: '10px' }}>
                   {result.hybrid_explanation.mode}
                 </span>
-                <span style={{ fontSize: '11px', color: '#10b981' }}>
-                  Zero External PII Egress: Guaranteed
+                <span style={{ fontSize: '11px', color: 'var(--emerald-success)' }}>
+                  Local rules &bull; no external request
                 </span>
               </div>
-              <p style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: '1.4' }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-main)', lineHeight: '1.4' }}>
                 {result.hybrid_explanation.ai_summary}
               </p>
             </div>
