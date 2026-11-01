@@ -1,0 +1,221 @@
+"""
+Defence AI - Cryptographic Vault, Key Separation & Sensitive Data Protection.
+
+Enforces:
+- Authenticated AES-256-GCM encryption with Cryptographic Maze key derivation.
+- Automatic vault protection & lock state management upon elevated threat levels.
+- Secure disaster recovery keys.
+- Continuous integrity checking.
+"""
+from datetime import datetime, timezone
+from typing import Any, Dict, List, Optional
+
+from sqlalchemy.orm import Session
+
+from app.agents.base import BaseAgent, event_bus
+from app.core.audit_chain import AuditChainService
+from app.core.crypto_maze import crypto_maze
+from app.database import SessionLocal, VaultItem
+
+
+class DefenceAI(BaseAgent):
+    """
+    Defensive security agent managing cryptographic keys, sensitive data vaults,
+    encryption layers, and secure access policies.
+    """
+
+    def __init__(self):
+        super().__init__(
+            agent_id="defence_ai",
+            name="Defence AI",
+            role="Guards sensitive assets, enforces Cryptographic Maze encryption, and oversees vault integrity"
+        )
+        self.is_vault_locked: bool = True
+        self.active_session_passphrase: Optional[str] = None
+
+    def _register_event_handlers(self):
+        # Listen for elevated threat alerts to trigger immediate protective lockdown
+        event_bus.subscribe("THREAT_REPORT_SUBMITTED", self._on_threat_detected)
+        event_bus.subscribe("EMERGENCY_LOCKDOWN_ACTIVATED", self._on_emergency_lockdown)
+
+    def _on_threat_detected(self, event):
+        severity = event.payload.get("severity")
+        if severity in ["HIGH", "CRITICAL"]:
+            self.lock_vault(reason=f"Elevated threat detected ({severity})")
+
+    def _on_emergency_lockdown(self, event):
+        self.lock_vault(reason="Emergency lockdown initiated by Offence AI / Controller")
+
+    def lock_vault(self, reason: str = "Manual lock"):
+        """Purges cached credentials from memory and seals vault."""
+        self.is_vault_locked = True
+        self.active_session_passphrase = None
+        self.heartbeat()
+        self.emit_event(
+            event_type="VAULT_LOCKED",
+            payload={"reason": reason, "timestamp": datetime.now(timezone.utc).isoformat()},
+            severity="WARNING"
+        )
+
+    def unlock_vault(self, passphrase: str, db: Session) -> Dict[str, Any]:
+        """
+        Verifies passphrase against a test/canary item or unlocks session for subsequent operations.
+        """
+        self.task_count += 1
+        self.heartbeat()
+
+        # In a real vault, we verify passphrase against canary or existing items
+        first_item = db.query(VaultItem).first()
+        if first_item:
+            try:
+                crypto_maze.decrypt_segmented(
+                    {
+                        "salt_b64": first_item.salt_b64,
+                        "nonce_b64": first_item.nonce_b64,
+                        "ciphertext_b64": first_item.ciphertext_b64,
+                        "tag_b64": first_item.tag_b64,
+                        "label": first_item.label,
+                    },
+                    passphrase=passphrase
+                )
+            except ValueError:
+                AuditChainService.record_event(
+                    db, actor="Defence AI", event_type="VAULT_UNLOCK_FAILED",
+                    payload={"reason": "Incorrect passphrase attempt"}
+                )
+                return {"success": False, "message": "Authentication failed: Invalid passphrase."}
+
+        self.is_vault_locked = False
+        self.active_session_passphrase = passphrase
+
+        AuditChainService.record_event(
+            db, actor="Defence AI", event_type="VAULT_UNLOCKED",
+            payload={"status": "UNLOCKED"}
+        )
+        return {"success": True, "message": "Cryptographic Vault unlocked successfully."}
+
+    def encrypt_and_store_secret(
+        self,
+        db: Session,
+        label: str,
+        plaintext: str,
+        passphrase: str,
+        category: str = "CREDENTIAL"
+    ) -> Dict[str, Any]:
+        """
+        Stores encrypted secret using Cryptographic Maze layered AEAD encryption.
+        """
+        self.task_count += 1
+        self.heartbeat()
+
+        encrypted_pack = crypto_maze.encrypt_segmented(
+            plaintext=plaintext,
+            passphrase=passphrase,
+            label=label,
+        )
+
+        item = VaultItem(
+            label=label,
+            category=category,
+            ciphertext_b64=encrypted_pack["ciphertext_b64"],
+            nonce_b64=encrypted_pack["nonce_b64"],
+            salt_b64=encrypted_pack["salt_b64"],
+            tag_b64=encrypted_pack["tag_b64"],
+            is_locked=True
+        )
+        db.add(item)
+        db.commit()
+        db.refresh(item)
+
+        AuditChainService.record_event(
+            db,
+            actor="Defence AI",
+            event_type="VAULT_ITEM_STORED",
+            payload={"item_id": item.id, "label": label, "category": category}
+        )
+
+        return {
+            "id": item.id,
+            "label": item.label,
+            "category": item.category,
+            "created_at": item.created_at.isoformat(),
+            "status": "SECURED_AES_256_GCM"
+        }
+
+    def decrypt_secret(
+        self,
+        db: Session,
+        item_id: int,
+        passphrase: str
+    ) -> Dict[str, Any]:
+        """
+        Retrieves and decrypts a vault item.
+        """
+        self.task_count += 1
+        self.heartbeat()
+
+        item = db.query(VaultItem).filter(VaultItem.id == item_id).first()
+        if not item:
+            return {"error": "Vault item not found"}
+
+        try:
+            plaintext = crypto_maze.decrypt_segmented(
+                {
+                    "salt_b64": item.salt_b64,
+                    "nonce_b64": item.nonce_b64,
+                    "ciphertext_b64": item.ciphertext_b64,
+                    "tag_b64": item.tag_b64,
+                    "label": item.label,
+                },
+                passphrase=passphrase
+            )
+
+            AuditChainService.record_event(
+                db,
+                actor="Defence AI",
+                event_type="VAULT_ITEM_DECRYPTED",
+                payload={"item_id": item.id, "label": item.label}
+            )
+
+            return {
+                "id": item.id,
+                "label": item.label,
+                "category": item.category,
+                "plaintext": plaintext,
+                "verified": True,
+            }
+        except ValueError as e:
+            AuditChainService.record_event(
+                db,
+                actor="Defence AI",
+                event_type="VAULT_DECRYPTION_TAMPER_ALERT",
+                payload={"item_id": item.id, "error": str(e)}
+            )
+            return {"error": str(e), "verified": False}
+
+    def generate_escrow_backup(self, payload: str) -> Dict[str, str]:
+        """Generates emergency disaster recovery token via Fernet envelope."""
+        key, token = crypto_maze.generate_recovery_token(payload)
+        return {
+            "recovery_key": key,
+            "encrypted_token": token,
+            "instructions": "Store the recovery key in an isolated physical vault or offline medium."
+        }
+
+    def handle_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        action = message.get("action")
+        db = SessionLocal()
+        try:
+            if action == "lock":
+                self.lock_vault()
+                return {"status": "LOCKED"}
+            elif action == "status":
+                item_count = db.query(VaultItem).count()
+                return {
+                    "is_locked": self.is_vault_locked,
+                    "vault_items_count": item_count,
+                    "algorithm": "AES-256-GCM + PBKDF2-HMAC-SHA256"
+                }
+        finally:
+            db.close()
+        return {"error": f"Unknown action '{action}' for Defence AI"}
