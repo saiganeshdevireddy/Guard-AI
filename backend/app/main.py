@@ -14,10 +14,12 @@ from app.routers import (
     auth_api,
     android_api,
     audit_api,
+    browser_sessions_api,
     emergency_api,
     sandbox_api,
     scanner_api,
     vault_api,
+    workers_api,
 )
 
 
@@ -35,6 +37,8 @@ async def lifespan(app: FastAPI):
                 event_type="SYSTEM_GENESIS_INITIALIZED",
                 payload={"version": settings.VERSION, "platform": "Local prototype"}
             )
+        from app.services.worker_communication import WorkerCommunicationService
+        WorkerCommunicationService().record_key_configuration(db)
     finally:
         db.close()
     yield
@@ -65,6 +69,9 @@ app.include_router(vault_api.router, prefix=settings.API_V1_STR)
 app.include_router(audit_api.router, prefix=settings.API_V1_STR)
 app.include_router(emergency_api.router, prefix=settings.API_V1_STR)
 app.include_router(sandbox_api.router, prefix=settings.API_V1_STR)
+app.include_router(browser_sessions_api.router, prefix=settings.API_V1_STR)
+app.include_router(workers_api.router, prefix=settings.API_V1_STR)
+app.include_router(workers_api.internal_router, prefix=settings.API_V1_STR)
 app.include_router(android_api.router, prefix=settings.API_V1_STR)
 
 

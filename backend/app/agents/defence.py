@@ -7,7 +7,7 @@ Enforces:
 - Secure disaster recovery keys.
 - Continuous integrity checking.
 """
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from sqlalchemy.orm import Session
@@ -32,6 +32,31 @@ class DefenceAI(BaseAgent):
         )
         self.is_vault_locked: bool = True
         self.active_session_passphrase: Optional[str] = None
+        # Browser-session policy is explicitly disabled until a trusted policy
+        # configuration and independently verified worker are available.
+        self._browser_session_policy_enabled: bool = False
+
+    def browser_session_policy_enabled(self) -> bool:
+        """Return Defence-owned server policy; this is never client-controlled."""
+        return self._browser_session_policy_enabled is True
+
+    def authorizes_browser_worker(self, registration, *, now: datetime, max_age) -> bool:
+        """Defence independently rejects missing, revoked, unhealthy or stale worker evidence."""
+        from app.services.browser_session_manager import WorkerHealth, WorkerRegistration
+
+        if self.browser_session_policy_enabled() is not True:
+            return False
+        if not isinstance(registration, WorkerRegistration):
+            return False
+        if registration.health is not WorkerHealth.HEALTHY or registration.evidence_verified is not True:
+            return False
+        if registration.observed_at is None or registration.observed_at.tzinfo is None or now.tzinfo is None:
+            return False
+        try:
+            age = now - registration.observed_at
+        except (TypeError, OverflowError):
+            return False
+        return timedelta(0) <= age <= max_age
 
     def _register_event_handlers(self):
         # Listen for elevated threat alerts to trigger immediate protective lockdown

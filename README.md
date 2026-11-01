@@ -9,6 +9,7 @@ Guard AI is a local cybersecurity prototype with a React dashboard, FastAPI serv
 - Vault encryption using AES-256-GCM, PBKDF2-HMAC-SHA256, and separated HKDF keys.
 - Local incident review, explicit operator confirmation, and reversible in-app incident mode.
 - Static file byte preview and local URL review. Remote pages are not fetched or rendered.
+- Genuine isolated browser preview is not implemented; URL review does not fetch or render remote pages.
 - Informer summaries and browser speech synthesis when supported by the browser.
 - A three-way Dark, Light, and System theme selector that remembers the user's choice.
 - A clearly labelled Android demo workflow. Its telemetry and lock flag are in-memory examples only.
@@ -56,6 +57,8 @@ Push-Location backend
 Pop-Location
 ```
 
+The repository currently defines 39 backend pytest tests and 19 frontend Node.js test cases. These are source-based counts, not a claim that the tests passed in this checkout. Run the frontend tests with `npm test` from `frontend`.
+
 ## Configuration
 
 `backend/app/config.py` uses these optional process environment variables:
@@ -81,14 +84,14 @@ Pop-Location
 
 ## Security and platform limits
 
-- The backend binds to `127.0.0.1`; keep it local. The API has no user authentication and is not suitable for deployment on a public or shared network.
+- The backend binds to `127.0.0.1`; keep it local. Protected API routes use configured short-lived bearer tokens and role checks. Authentication fails closed until an administrator provisions a signing secret and active user; the API is not suitable for deployment on a public or shared network.
 - CORS is restricted to the local development and preview origins by default.
 - File scans inspect uploaded bytes only; they do not scan the whole disk or move the original file.
-- URL checks are local heuristics. The prototype does not fetch remote pages, inspect live response headers, or provide browser isolation.
+- URL checks are local heuristics. The prototype does not fetch remote pages, inspect live response headers, or provide a genuine isolated browser preview.
 - The Windows process agent analyzes caller-supplied process metadata; it does not monitor Windows processes.
 - Wi-Fi checks analyze values supplied by the user; they do not enumerate nearby networks.
 - Emergency mode changes Guard AI's local state and audit history. OS, process, adapter, and network containment are simulations and require native integrations that are not included.
 - Android information is marked demonstration data; no pairing, Android app, background service, or remote lock channel exists.
 - Cloud AI and external threat-intelligence providers are not connected. Detection and explanation stay local.
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), and [docs/ROADMAP.md](docs/ROADMAP.md) for implementation details and limitations.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md), [docs/ISOLATED_BROWSER_ARCHITECTURE.md](docs/ISOLATED_BROWSER_ARCHITECTURE.md), [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md), and [docs/ROADMAP.md](docs/ROADMAP.md) for implementation details and limitations. Genuine isolated browser preview is a proposed, approval-gated feature and is not available in the current prototype.

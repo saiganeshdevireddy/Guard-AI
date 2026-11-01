@@ -13,7 +13,7 @@ FastAPI on 127.0.0.1:8000
   └─ SQLAlchemy → SQLite (default)
 ```
 
-The Vite development server proxies `/api` to the local FastAPI service. The backend is bound to loopback. Protected API routes require configured bearer authentication; health and token exchange are public. The frontend does not yet send tokens, and the backend must not be exposed on a shared or public network until that integration and further production controls are completed.
+The Vite development server proxies `/api` to the local FastAPI service. The backend is bound to loopback. Protected API routes require configured bearer authentication; health and token exchange are public. The frontend signs in, retains the short-lived bearer token in JavaScript memory, and sends it on protected requests. Keep the backend local; this prototype is not ready to expose on a shared or public network.
 
 ## Agent roles
 
@@ -32,14 +32,18 @@ The event bus and agent objects exist in one Python process. SQLite stores threa
 - The audit ledger hashes payloads and links records using the previous block hash. It detects changes in retained history; it is not immutable storage and cannot detect removal of a trailing suffix without a trusted external checkpoint.
 - The API limits uploaded file inspections to the configured byte limit. Scans inspect bytes only and do not execute or move the original file.
 - Local rules and explanatory text run without cloud requests. The optional cloud provider shown in older documentation was a mock and is not implemented.
-- The remote URL preview fetch was removed from the workflow because a backend fetcher could expose local network resources. URL Review does not retrieve page content or headers.
+- Genuine isolated browser preview is not implemented. URL Review does not fetch or render remote pages or inspect live response headers; the URL endpoint returns local heuristic review only. Avoiding backend URL fetching also prevents the preview feature from becoming an SSRF path to local network resources.
 
 ## Integrations not included
 
-- No Windows service, process enumeration, browser extension, file-system watcher, or network adapter controller exists.
+- No hardened isolated browser runtime, Windows service, process enumeration, browser extension, file-system watcher, or network adapter controller exists.
 - No Android app, pairing flow, authentication protocol, background service, or real remote lock exists. The API offers explicitly labelled in-memory demo values only.
 - No threat-intelligence feed, cloud AI provider, external blockchain, or OS-backed key store is configured.
 - Native OS integration would require separately designed permissions, signing, update, pairing, and failure-handling workflows.
+
+The proposed genuine browser-isolation design, deployment comparison, and approval gate are documented in [ISOLATED_BROWSER_ARCHITECTURE.md](ISOLATED_BROWSER_ARCHITECTURE.md). The existing URL Review remains a local heuristic check; no genuine isolated browser runtime is implemented.
+
+The consolidated target roles and component ownership matrix are in [GUARD_AI_MASTER_ARCHITECTURE.md](GUARD_AI_MASTER_ARCHITECTURE.md), with current security findings in [SECURITY_AUDIT_FINDINGS.md](SECURITY_AUDIT_FINDINGS.md). These are documentation decisions and plans, not implemented controls.
 # API authentication boundary
 
 The FastAPI service issues HS256 JWTs using PyJWT and verifies passwords with

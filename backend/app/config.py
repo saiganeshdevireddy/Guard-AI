@@ -42,6 +42,14 @@ class Settings(BaseModel):
     AUTH_TOKEN_SECRET: str = os.getenv("GUARD_AI_AUTH_TOKEN_SECRET", "")
     AUTH_TOKEN_TTL_SECONDS: int = int(os.getenv("GUARD_AI_AUTH_TOKEN_TTL_SECONDS", "900"))
     AUTH_USERS_JSON: str = os.getenv("GUARD_AI_AUTH_USERS", "[]")
+
+    # Worker communication is disabled unless an operator supplies a trusted CA
+    # and a separate ticket-signing key through the process environment.
+    WORKER_CA_CERT_PEM: str = os.getenv("GUARD_AI_WORKER_CA_CERT_PEM", "")
+    WORKER_CRL_PEM: str = os.getenv("GUARD_AI_WORKER_CRL_PEM", "")
+    WORKER_TICKET_SIGNING_KEY: str = os.getenv("GUARD_AI_WORKER_TICKET_SIGNING_KEY", "")
+    WORKER_TICKET_SIGNING_KEY_ID: str = os.getenv("GUARD_AI_WORKER_TICKET_SIGNING_KEY_ID", "v1")
+    WORKER_TICKET_VERIFY_KEYS_JSON: str = os.getenv("GUARD_AI_WORKER_TICKET_VERIFY_KEYS_JSON", "{}")
     
     # Agent Communication & Polling
     AGENT_HEARTBEAT_INTERVAL_SEC: int = 5
