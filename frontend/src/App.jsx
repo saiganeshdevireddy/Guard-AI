@@ -1,6 +1,7 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { AgentGrid } from './components/AgentGrid';
+import { CoreWorkflow } from './components/CoreWorkflow';
 import { VoiceBriefing } from './components/VoiceBriefing';
 import { QuickScanner } from './components/QuickScanner';
 import { CryptoVault } from './components/CryptoVault';
@@ -10,16 +11,29 @@ import { AuditLedger } from './components/AuditLedger';
 import { AndroidCompanion } from './components/AndroidCompanion';
 import { api } from './services/api';
 import { voice } from './services/voice';
+import { useTheme } from './theme/ThemeProvider';
+import { useAuth } from './services/AuthProvider';
+import { LoginScreen } from './components/LoginScreen';
 
-export default function App() {
+function DashboardApp() {
+  const auth = useAuth();
+  const { preference: themePreference, setPreference: setThemePreference } = useTheme();
   const [agents, setAgents] = useState([]);
   const [briefing, setBriefing] = useState(null);
   const [emergencyStatus, setEmergencyStatus] = useState(null);
   const [isMuted, setIsMuted] = useState(false);
   const [isSpeaking, setIsSpeaking] = useState(false);
-  const [localPrivacyMode, setLocalPrivacyMode] = useState(true);
+  const [privacyMode, setPrivacyMode] = useState(null);
+  const [backendAvailable, setBackendAvailable] = useState(null);
+  const [vaultStatus, setVaultStatus] = useState(null);
+  const [auditStatus, setAuditStatus] = useState(null);
+  const [blockchainStatus, setBlockchainStatus] = useState(null);
+  const [freshness, setFreshness] = useState({});
+  const [telemetryDegraded, setTelemetryDegraded] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'scanner', 'vault', 'sandbox', 'emergency', 'audit', 'android'
-  const [threatCount, setThreatCount] = useState(0);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [threatCount, setThreatCount] = useState(null);
+  const telemetryRequest = useRef(0);
 
   useEffect(() => {
     fetchSystemState();
@@ -28,20 +42,46 @@ export default function App() {
   }, []);
 
   const fetchSystemState = async () => {
+    const requestId = ++telemetryRequest.current;
+    setBackendAvailable(null); setAgents([]); setBriefing(null); setEmergencyStatus(null);
+    setPrivacyMode(null); setThreatCount(null); setVaultStatus(null); setAuditStatus(null); setBlockchainStatus(null);
     try {
-      const [agentsRes, briefingRes, emergRes, threatsRes] = await Promise.allSettled([
+      const [healthRes, agentsRes, briefingRes, emergRes, threatsRes, vaultRes, auditRes, blockchainRes] = await Promise.allSettled([
+        api.getHealth(),
         api.getAgents(),
         api.getVoiceBriefing(),
         api.getEmergencyStatus(),
         api.getThreats(),
+        api.getVaultStatus(),
+        api.verifyAuditLedger(),
+        api.getBlockchainStatus(),
       ]);
 
-      if (agentsRes.status === 'fulfilled') setAgents(agentsRes.value.agents || []);
-      if (briefingRes.status === 'fulfilled') setBriefing(briefingRes.value);
-      if (emergRes.status === 'fulfilled') setEmergencyStatus(emergRes.value);
-      if (threatsRes.status === 'fulfilled') setThreatCount(threatsRes.value.count || 0);
+      if (requestId !== telemetryRequest.current) return;
+      const updatedAt = new Date();
+      const nextFreshness = {};
+
+      if (healthRes.status === 'fulfilled') {
+        setBackendAvailable(healthRes.value.status === 'OPERATIONAL');
+        setPrivacyMode(healthRes.value.privacy_mode || 'UNKNOWN');
+      } else {
+        setBackendAvailable(false);
+      }
+      if (healthRes.status === 'fulfilled') nextFreshness.backend = updatedAt;
+      if (agentsRes.status === 'fulfilled' && Array.isArray(agentsRes.value?.agents)) { setAgents(agentsRes.value.agents); nextFreshness.agents = updatedAt; }
+      if (briefingRes.status === 'fulfilled' && briefingRes.value) { setBriefing(briefingRes.value); nextFreshness.briefing = updatedAt; }
+      if (emergRes.status === 'fulfilled' && typeof emergRes.value?.is_active === 'boolean') { setEmergencyStatus(emergRes.value); nextFreshness.emergency = updatedAt; }
+      if (threatsRes.status === 'fulfilled' && Number.isFinite(threatsRes.value?.count)) { setThreatCount(threatsRes.value.count); nextFreshness.threats = updatedAt; }
+      if (vaultRes.status === 'fulfilled' && typeof vaultRes.value?.is_locked === 'boolean' && typeof vaultRes.value?.algorithm === 'string') { setVaultStatus(vaultRes.value); nextFreshness.vault = updatedAt; }
+      if (auditRes.status === 'fulfilled' && typeof auditRes.value?.valid === 'boolean' && Number.isFinite(auditRes.value?.block_count)) { setAuditStatus(auditRes.value); nextFreshness.audit = updatedAt; }
+      if (blockchainRes.status === 'fulfilled' && typeof blockchainRes.value?.available === 'boolean') setBlockchainStatus(blockchainRes.value);
+      setFreshness(nextFreshness);
+      setTelemetryDegraded([healthRes, agentsRes, briefingRes, emergRes, threatsRes, vaultRes, auditRes].some((result) => result.status !== 'fulfilled'));
     } catch (err) {
-      console.error('Error polling system telemetry:', err);
+      if (requestId === telemetryRequest.current) {
+        setBackendAvailable(false); setAgents([]); setBriefing(null); setEmergencyStatus(null); setBlockchainStatus(null);
+        setThreatCount(null); setVaultStatus(null); setAuditStatus(null); setFreshness({}); setTelemetryDegraded(true);
+      }
     }
   };
 
@@ -80,55 +120,83 @@ export default function App() {
         onToggleMute={handleToggleMute}
         isSpeaking={isSpeaking}
         emergencyStatus={emergencyStatus}
-        localPrivacyMode={localPrivacyMode}
-        onTogglePrivacy={() => setLocalPrivacyMode(!localPrivacyMode)}
+        privacyMode={privacyMode}
+        themePreference={themePreference}
+        onThemeChange={setThemePreference}
+        username={auth.username}
+        onLogout={() => auth.logout().catch(() => {})}
       />
 
-      <main style={{ flex: 1, maxWidth: '1280px', width: '100%', margin: '0 auto', padding: '24px 20px' }}>
+      <main className={`app-layout${sidebarCollapsed ? ' sidebar-collapsed' : ''}`}>
+        <aside className="app-sidebar" aria-label="Main navigation">
+          <div className="sidebar-heading"><span className="eyebrow">COMMAND MENU</span><button className="sidebar-toggle" type="button" onClick={() => setSidebarCollapsed(!sidebarCollapsed)} aria-label={sidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}>{sidebarCollapsed ? '›' : '‹'}</button></div>
+          <nav className="view-tabs" aria-label="Guard AI screens">
+            {[
+              { id: 'dashboard', label: 'Command center' },
+              { id: 'scanner', label: 'Threat scanner' },
+              { id: 'vault', label: 'Cryptographic vault' },
+              { id: 'sandbox', label: 'Security sandbox' },
+              { id: 'emergency', label: 'Emergency response' },
+              { id: 'audit', label: 'Audit ledger' },
+              { id: 'android', label: 'Android companion' },
+            ].map((tab, index) => (
+              <button key={tab.id} type="button" onClick={() => setActiveTab(tab.id)} className={`view-tab${activeTab === tab.id ? ' is-active' : ''}`} aria-current={activeTab === tab.id ? 'page' : undefined} title={tab.label}>
+                <span className="view-tab-index">{String(index + 1).padStart(2, '0')}</span><span className="view-tab-label">{tab.label}</span>
+              </button>
+            ))}
+          </nav>
+          <div className="sidebar-footnote"><span className={`connection-dot ${backendAvailable && !telemetryDegraded ? 'is-online' : ''}`} />{backendAvailable === null ? 'Checking API' : !backendAvailable ? 'API unavailable' : telemetryDegraded ? 'API degraded' : 'API connected'}</div>
+        </aside>
+
+        <section className="app-content">
+        {auth.permissionError && <div role="alert" className="status-notice status-notice-error">The backend denied a request for this account (HTTP 403). Your session remains active, but the requested operation is not permitted. <button className="btn btn-outline" type="button" onClick={auth.clearPermissionError}>Dismiss</button></div>}
         {/* Real-time Telemetry Bar */}
+        {telemetryDegraded && <div role="status" className="status-notice status-notice-warning">Some live status requests failed. Affected capabilities are shown as unavailable until the backend responds again.</div>}
         <div style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
           gap: '14px',
           marginBottom: '24px',
         }}>
-          <div className="glass-panel" style={{ padding: '14px 18px' }}>
-            <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Active Defense Grid</span>
+          <div className="glass-panel telemetry-tile" title={`Source: Guard AI API · Last successful update: ${freshness.agents?.toLocaleString() || 'Never'}`} style={{ padding: '14px 18px' }}>
+              <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Registered Agents</span>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
-              <span style={{ fontSize: '24px', fontWeight: '800', color: '#00f2fe', fontFamily: 'var(--font-mono)' }}>
-                {agents.length || 10}
+              <span style={{ fontSize: '24px', fontWeight: '800', color: 'var(--cyan-primary)', fontFamily: 'var(--font-mono)' }}>
+                {agents.length}
               </span>
-              <span style={{ fontSize: '12px', color: '#10b981' }}>Agents Synchronized</span>
+              <span style={{ fontSize: '12px', color: backendAvailable === false ? 'var(--crimson-danger)' : 'var(--text-dim)' }}>
+                {backendAvailable === null ? 'Checking backend' : backendAvailable ? 'Reported by backend' : 'Backend unavailable'}
+              </span>
             </div>
           </div>
 
-          <div className="glass-panel" style={{ padding: '14px 18px' }}>
+          <div className="glass-panel telemetry-tile" title={`Source: Guard AI API · Last successful update: ${freshness.threats?.toLocaleString() || 'Never'}`} style={{ padding: '14px 18px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Incidents Detected</span>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
-              <span style={{ fontSize: '24px', fontWeight: '800', color: threatCount > 0 ? '#f59e0b' : '#10b981', fontFamily: 'var(--font-mono)' }}>
-                {threatCount}
+              <span style={{ fontSize: '24px', fontWeight: '800', color: threatCount > 0 ? 'var(--amber-warning)' : 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                {threatCount ?? '—'}
               </span>
-              <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>Lifetime Events</span>
+              <span style={{ fontSize: '12px', color: 'var(--text-dim)' }}>{threatCount === null ? 'Unavailable' : `Updated ${freshness.threats?.toLocaleTimeString() || 'unknown'}`}</span>
             </div>
           </div>
 
-          <div className="glass-panel" style={{ padding: '14px 18px' }}>
+          <div className="glass-panel telemetry-tile" title={`Source: Guard AI API · Last successful update: ${freshness.vault?.toLocaleString() || 'Never'}`} style={{ padding: '14px 18px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Cryptographic Vault</span>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
-              <span style={{ fontSize: '18px', fontWeight: '700', color: '#10b981' }}>
-                AES-256-GCM
+              <span style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text-main)' }}>
+                {vaultStatus?.algorithm || 'Unverified'}
               </span>
-              <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>600K PBKDF2</span>
+              <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>{vaultStatus ? `${vaultStatus.is_locked ? 'Locked' : 'Unlocked'} · ${freshness.vault?.toLocaleTimeString() || ''}` : 'Unverified'}</span>
             </div>
           </div>
 
-          <div className="glass-panel" style={{ padding: '14px 18px' }}>
+          <div className="glass-panel telemetry-tile" title={`Source: Guard AI API · Last successful verification: ${freshness.audit?.toLocaleString() || 'Never'}`} style={{ padding: '14px 18px' }}>
             <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Audit Ledger</span>
             <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', marginTop: '4px' }}>
-              <span style={{ fontSize: '18px', fontWeight: '700', color: '#8b5cf6' }}>
-                SHA-256 Chain
+              <span style={{ fontSize: '16px', fontWeight: '700', color: auditStatus?.valid ? 'var(--emerald-success)' : 'var(--text-muted)' }}>
+                {auditStatus ? (auditStatus.valid ? 'Integrity verified' : 'Integrity issue') : 'Unverified'}
               </span>
-              <span style={{ fontSize: '11px', color: '#10b981' }}>Immutable</span>
+              <span style={{ fontSize: '11px', color: 'var(--text-dim)' }}>{auditStatus ? `${auditStatus.block_count} entries · ${freshness.audit?.toLocaleTimeString() || ''}` : 'Unverified'}</span>
             </div>
           </div>
         </div>
@@ -141,39 +209,17 @@ export default function App() {
           isMuted={isMuted}
         />
 
-        {/* Main View Navigation Tabs */}
-        <div style={{
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '8px',
-          marginBottom: '22px',
-          paddingBottom: '12px',
-          borderBottom: '1px solid rgba(0, 242, 254, 0.15)',
-        }}>
-          {[
-            { id: 'dashboard', label: '⚡ Multi-Agent Matrix' },
-            { id: 'scanner', label: '🎯 Threat Scanner' },
-            { id: 'vault', label: '🔐 Cryptographic Vault' },
-            { id: 'sandbox', label: '🧪 Isolated Sandbox' },
-            { id: 'emergency', label: '🚨 Emergency Response' },
-            { id: 'audit', label: '⛓️ Blockchain Ledger' },
-            { id: 'android', label: '📱 Android Companion' },
-          ].map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`btn ${activeTab === tab.id ? 'btn-primary' : 'btn-outline'}`}
-              style={{ fontSize: '13px', padding: '8px 16px' }}
-            >
-              {tab.label}
-            </button>
-          ))}
-        </div>
-
         {/* Active Tab View */}
         {activeTab === 'dashboard' && (
           <div>
-            <AgentGrid agents={agents} />
+            <AgentGrid agents={agents} stateReceived={backendAvailable} updatedAt={freshness.agents} />
+            <CoreWorkflow
+              backendAvailable={backendAvailable}
+              vaultStatus={vaultStatus}
+              auditStatus={auditStatus}
+              blockchainStatus={blockchainStatus}
+              onNavigate={setActiveTab}
+            />
             <QuickScanner onThreatDetected={handleThreatDetected} />
           </div>
         )}
@@ -201,18 +247,25 @@ export default function App() {
         {activeTab === 'android' && (
           <AndroidCompanion />
         )}
+        </section>
       </main>
 
       {/* Footer */}
       <footer style={{
         textAlign: 'center',
         padding: '20px',
-        borderTop: '1px solid rgba(255, 255, 255, 0.05)',
+        borderTop: '1px solid var(--line-subtle)',
         fontSize: '12px',
         color: 'var(--text-dim)',
       }}>
-        Guard AI &bull; Intelligent Multi-Agent Cybersecurity Platform &bull; Windows & Android Ready
+        Guard AI &bull; Local rule-based security prototype &bull; Native device protection is not included
       </footer>
     </div>
   );
+}
+
+export default function App() {
+  const auth = useAuth();
+  if (!auth.isAuthenticated) return <LoginScreen auth={auth} />;
+  return <DashboardApp />;
 }

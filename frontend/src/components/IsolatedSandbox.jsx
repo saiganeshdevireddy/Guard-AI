@@ -3,19 +3,18 @@ import { api } from '../services/api';
 import { GlobeIcon, AlertIcon } from './Icons';
 
 export function IsolatedSandbox() {
-  const [targetUrl, setTargetUrl] = useState('https://example.com');
+  const [targetUrl, setTargetUrl] = useState('');
   const [loading, setLoading] = useState(false);
-  const [sandboxDoc, setSandboxDoc] = useState(null);
-  const [error, setError] = useState(null);
+  const [review, setReview] = useState(null);
+  const [error, setError] = useState('');
 
-  const handlePreview = async (e) => {
-    e.preventDefault();
-    if (!targetUrl) return;
+  const handleReview = async (event) => {
+    event.preventDefault();
     setLoading(true);
-    setError(null);
+    setError('');
+    setReview(null);
     try {
-      const res = await api.previewURLSafely(targetUrl);
-      setSandboxDoc(res);
+      setReview(await api.previewURLSafely(targetUrl));
     } catch (err) {
       setError(err.message);
     } finally {
@@ -24,91 +23,46 @@ export function IsolatedSandbox() {
   };
 
   return (
-    <div className="glass-panel" style={{ padding: '24px', marginBottom: '28px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
+    <section className="glass-panel" style={{ padding: '24px', marginBottom: '28px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '14px' }}>
+        <GlobeIcon size={20} color="var(--cyan-primary)" />
         <div>
-          <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#fff' }}>Isolated Browsing Sandbox</h2>
-          <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Render untrusted web destinations with active scripts stripped, headers analyzed, and network storage blocked
-          </p>
+          <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-main)' }}>URL Review</h2>
+          <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Local review only; remote content is not fetched or rendered.</p>
         </div>
-        <span className="badge badge-medium">Air-Gap Emulation</span>
       </div>
 
-      {/* URL Input Form */}
-      <form onSubmit={handlePreview} style={{ display: 'flex', gap: '10px', marginBottom: '18px' }}>
+      <form onSubmit={handleReview} style={{ display: 'flex', gap: '10px', marginBottom: '16px' }}>
         <input
           type="text"
           value={targetUrl}
-          onChange={(e) => setTargetUrl(e.target.value)}
-          placeholder="Enter untrusted destination URL to safely preview..."
+          onChange={(event) => setTargetUrl(event.target.value)}
+          placeholder="Enter a URL to review locally"
           className="input-field"
           style={{ flex: 1 }}
+          maxLength={2048}
+          required
         />
         <button type="submit" disabled={loading} className="btn btn-primary" style={{ whiteSpace: 'nowrap' }}>
-          {loading ? 'Inspecting & Sanitizing...' : 'Launch Isolated Preview'}
+          {loading ? 'Reviewing…' : 'Review URL'}
         </button>
       </form>
 
-      {error && (
-        <div style={{ padding: '10px 14px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--crimson-danger)', borderRadius: '6px', color: '#ff6b6b', fontSize: '12px', marginBottom: '16px' }}>
-          {error}
-        </div>
-      )}
-
-      {/* Mandatory Sandbox Security Disclaimer */}
-      <div style={{
-        padding: '10px 14px',
-        background: 'rgba(245, 158, 11, 0.1)',
-        border: '1px solid rgba(245, 158, 11, 0.3)',
-        borderRadius: '6px',
-        color: '#fbbf24',
-        fontSize: '11px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px',
-        marginBottom: '18px',
-      }}>
+      <div style={{ padding: '10px 14px', background: 'var(--warning-soft)', border: '1px solid var(--warning-border)', borderRadius: '6px', color: 'var(--amber-warning)', fontSize: '12px', display: 'flex', gap: '8px' }}>
         <AlertIcon size={16} />
-        <span>
-          <strong>Operational Warning:</strong> Isolated browsing strips executable scripts and event handlers. While this mitigates typical drive-by download vectors, browser sandboxing cannot guarantee 100% protection against novel OS zero-day exploits.
-        </span>
+        <span>A low heuristic score does not mean a URL is safe. A hardened isolated browser is not included in this prototype.</span>
       </div>
 
-      {/* Sandboxed Iframe Preview */}
-      {sandboxDoc && (
-        <div style={{
-          border: '1px solid rgba(0, 242, 254, 0.3)',
-          borderRadius: '8px',
-          overflow: 'hidden',
-          background: '#ffffff',
-        }}>
-          <div style={{
-            background: '#101522',
-            padding: '8px 14px',
-            borderBottom: '1px solid rgba(255, 255, 255, 0.1)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            fontSize: '12px',
-            color: '#fff',
-          }}>
-            <span style={{ fontFamily: 'var(--font-mono)' }}>Safe Frame: {sandboxDoc.url}</span>
-            <span style={{ color: '#10b981' }}>Scripts Blocked &bull; Size: {Math.round(sandboxDoc.raw_size_bytes / 1024)} KB</span>
-          </div>
-          <iframe
-            title="Safe Sandbox Inspector"
-            srcDoc={sandboxDoc.sanitized_html}
-            sandbox="allow-same-origin"
-            style={{
-              width: '100%',
-              height: '420px',
-              border: 'none',
-              background: '#ffffff',
-            }}
-          />
+      {error && <p role="alert" style={{ color: 'var(--crimson-danger)', marginTop: '14px' }}>{error}</p>}
+      {review && (
+        <div style={{ marginTop: '16px', padding: '14px', borderRadius: '8px', background: 'var(--surface-subtle)' }}>
+          <strong style={{ color: 'var(--text-main)' }}>{review.url}</strong>
+          <p style={{ color: 'var(--amber-warning)', marginTop: '8px', fontSize: '13px' }}>{review.warning}</p>
+          <ul style={{ color: 'var(--text-muted)', margin: '8px 0 0 18px', fontSize: '12px' }}>
+            {review.limitations?.map((limitation) => <li key={limitation}>{limitation}</li>)}
+          </ul>
         </div>
       )}
-    </div>
+    </section>
   );
 }

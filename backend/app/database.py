@@ -1,5 +1,6 @@
 """Database models and session management for Guard AI."""
 import json
+import hashlib
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -10,7 +11,10 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
+    UniqueConstraint,
     create_engine,
+    inspect,
+    text,
 )
 from sqlalchemy.orm import declarative_base, sessionmaker
 
@@ -51,7 +55,7 @@ class ThreatEvent(Base):
 
 
 class AuditEntry(Base):
-    """Tamper-evident blockchain-style hash ledger for immutable security auditing."""
+    """Tamper-evident hash ledger for local security event history."""
     __tablename__ = "audit_entries"
 
     id = Column(Integer, primary_key=True, index=True)
@@ -64,6 +68,145 @@ class AuditEntry(Base):
     block_hash = Column(String(64), unique=True, index=True)  # SHA-256(prev_hash + timestamp + actor + event_type + payload_hash)
     signature = Column(String(128), default="GUARD_AI_VERIFIED")
     verified = Column(Boolean, default=True)
+
+
+class BlockchainAnchor(Base):
+    """Receipt reference for a hash anchored to a configured local EVM chain."""
+    __tablename__ = "blockchain_anchors"
+
+    id = Column(Integer, primary_key=True, index=True)
+    audit_entry_id = Column(Integer, nullable=False, unique=True, index=True)
+    chain_id = Column(Integer, nullable=True)
+    contract_address = Column(String(64), nullable=True)
+    transaction_hash = Column(String(80), nullable=True)
+    status = Column(String(16), nullable=False, default="PENDING", index=True)
+    retry_count = Column(Integer, nullable=False, default=0)
+    last_error = Column(Text, nullable=True)
+    anchored_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class RevokedToken(Base):
+    """Persistent denylist of JWT identifiers until each token expires."""
+    __tablename__ = "revoked_tokens"
+
+    jti = Column(String(128), primary_key=True)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    revoked_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class BrowserSessionRecord(Base):
+    """Privacy-minimal authorization metadata; contains no URL or browser contents."""
+    __tablename__ = "browser_sessions"
+    __table_args__ = (
+        UniqueConstraint("owner_id", "idempotency_key_hash", name="uq_browser_session_owner_idempotency"),
+    )
+
+    session_id = Column(String(64), primary_key=True)
+    owner_id = Column(String(128), nullable=False, index=True)
+    idempotency_key_hash = Column(String(64), nullable=False)
+    state = Column(String(32), nullable=False, index=True)
+    worker_id = Column(String(128), nullable=True)
+    policy_version = Column(String(64), nullable=False)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+    authorized_at = Column(DateTime, nullable=True)
+    updated_at = Column(DateTime, nullable=True)
+
+
+class WorkerIdentityRecord(Base):
+    """Administratively enrolled worker certificate identity; no private key material."""
+    __tablename__ = "worker_identities"
+
+    worker_id = Column(String(128), primary_key=True)
+    certificate_fingerprint = Column(String(64), nullable=False, unique=True, index=True)
+    certificate_pem = Column(Text, nullable=False)
+    certificate_chain_pem = Column(Text, nullable=False)
+    certificate_expires_at = Column(DateTime, nullable=False)
+    status = Column(String(16), nullable=False, default="ACTIVE", index=True)
+    registered_by = Column(String(128), nullable=False)
+    registered_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    revoked_at = Column(DateTime, nullable=True)
+
+
+class WorkerAuthorizationTicketRecord(Base):
+    """One-time worker authorization ticket state; raw bearer token is never stored."""
+    __tablename__ = "worker_authorization_tickets"
+    __table_args__ = (
+        UniqueConstraint("worker_id", "delivery_id_hash", name="uq_worker_ticket_delivery"),
+        UniqueConstraint("session_id", name="uq_worker_ticket_session"),
+    )
+
+    ticket_id = Column(String(64), primary_key=True)
+    jti_hash = Column(String(64), nullable=False, unique=True, index=True)
+    delivery_id_hash = Column(String(64), nullable=False)
+    key_id = Column(String(32), nullable=True)
+    session_id = Column(String(64), nullable=False, index=True)
+    worker_id = Column(String(128), nullable=False, index=True)
+    subject_id = Column(String(128), nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    redeemed_at = Column(DateTime, nullable=True)
+    revoked_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class BrowserWorkerOperationRecord(Base):
+    """Durable worker-command ledger; persists public evidence metadata only."""
+    __tablename__ = "browser_worker_operations"
+    __table_args__ = (
+        UniqueConstraint("operation_id", name="uq_browser_worker_operation_id"),
+    )
+
+    operation_id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), nullable=False, index=True)
+    owner_id = Column(String(128), nullable=False)
+    worker_id = Column(String(128), nullable=False, index=True)
+    command_type = Column(String(32), nullable=False)
+    signing_key_id = Column(String(32), nullable=False)
+    command_signature = Column(Text, nullable=False)
+    status = Column(String(32), nullable=False, index=True)
+    issued_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    delivery_attempts = Column(Integer, nullable=False, default=0)
+    delivery_status = Column(String(32), nullable=False, default="PENDING")
+    acknowledgement_status = Column(String(32), nullable=False, default="PENDING")
+    acknowledgement_at = Column(DateTime, nullable=True)
+    acknowledgement_observed_at = Column(DateTime, nullable=True)
+    acknowledgement_signature = Column(Text, nullable=True)
+    termination_status = Column(String(32), nullable=False, default="PENDING")
+    termination_observed_at = Column(DateTime, nullable=True)
+    termination_signature = Column(Text, nullable=True)
+    termination_evidence_verified = Column(Boolean, nullable=False, default=False)
+    cleanup_status = Column(String(32), nullable=False, default="NOT_STARTED")
+    cleanup_attempts = Column(Integer, nullable=False, default=0)
+    cleanup_evidence_json = Column(Text, nullable=True)
+    cleanup_evidence_signature = Column(Text, nullable=True)
+    cleanup_evidence_verified = Column(Boolean, nullable=False, default=False)
+    retry_count = Column(Integer, nullable=False, default=0)
+    recovery_state = Column(String(32), nullable=False, default="NONE")
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class WorkerHealthRecord(Base):
+    """Latest cryptographically authenticated health report, separate from enrollment."""
+    __tablename__ = "worker_health_records"
+
+    worker_id = Column(String(128), primary_key=True)
+    status = Column(String(16), nullable=False)
+    observed_at = Column(DateTime, nullable=False)
+    sequence = Column(Integer, nullable=False)
+    evidence_hash = Column(String(64), nullable=False)
+    evidence_payload = Column(Text, nullable=True)
+    signature_b64url = Column(String(2048), nullable=True)
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
+class WorkerSigningKeyState(Base):
+    """Last active worker-ticket key identifier observed; never stores key material."""
+    __tablename__ = "worker_signing_key_state"
+
+    id = Column(Integer, primary_key=True, default=1)
+    active_key_id = Column(String(32), nullable=False)
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
 class VaultItem(Base):
@@ -105,6 +248,38 @@ class AgentState(Base):
         self.metrics_json = json.dumps(value)
 
 
+class HumanActionApproval(Base):
+    """Persisted, user-bound, single-use approval for high-impact actions."""
+    __tablename__ = "human_action_approvals"
+
+    approval_id = Column(String(64), primary_key=True)
+    user_id = Column(String(128), nullable=False, index=True)
+    action = Column(String(64), nullable=False, index=True)
+    target = Column(String(512), nullable=True)
+    payload_hash = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="PENDING", index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class InspectionReportRecord(Base):
+    """Privacy-minimized record of a static Universal Safe Inspection result."""
+    __tablename__ = "inspection_reports"
+
+    report_id = Column(String(64), primary_key=True)
+    owner_id = Column(String(128), nullable=False, index=True)
+    inspection_type = Column(String(16), nullable=False, index=True)
+    artifact_sha256 = Column(String(64), nullable=True, index=True)
+    verdict = Column(String(16), nullable=False, index=True)
+    score = Column(Integer, nullable=False)
+    findings_json = Column(Text, nullable=False, default="[]")
+    limitations_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 class QuarantineRecord(Base):
     """Defensive isolation & quarantine ledger."""
     __tablename__ = "quarantine_records"
@@ -132,8 +307,12 @@ class EmergencyStatus(Base):
 
 
 def init_db():
-    """Create all tables in the database."""
+    """Create tables and apply the repository's narrow additive schema updates."""
     Base.metadata.create_all(bind=engine)
+    _ensure_browser_session_columns(engine)
+    _ensure_worker_ticket_delivery_column(engine)
+    _ensure_worker_ticket_key_id_column(engine)
+    _ensure_worker_health_evidence_columns(engine)
     db = SessionLocal()
     try:
         # Initialize default emergency status if not present
@@ -142,6 +321,168 @@ def init_db():
             db.commit()
     finally:
         db.close()
+
+
+def _ensure_browser_session_columns(bind):
+    """Add nullable lifecycle timestamps to existing databases without rebuilding tables.
+
+    This is a narrow additive compatibility step because the project has no migration
+    framework. Existing rows are retained and backfilled from their original creation
+    timestamp; future schema changes should move to a versioned migration system.
+    """
+    expected = {
+        "authorized_at": DateTime(),
+        "updated_at": DateTime(),
+    }
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if "browser_sessions" not in inspector.get_table_names():
+            return
+        existing = {column["name"] for column in inspector.get_columns("browser_sessions")}
+        for name, column_type in expected.items():
+            if name not in existing:
+                type_sql = column_type.compile(dialect=bind.dialect)
+                connection.execute(text(f'ALTER TABLE browser_sessions ADD COLUMN "{name}" {type_sql}'))
+        connection.execute(text(
+            "UPDATE browser_sessions SET authorized_at = created_at "
+            "WHERE authorized_at IS NULL"
+        ))
+        connection.execute(text(
+            "UPDATE browser_sessions SET updated_at = created_at WHERE updated_at IS NULL"
+        ))
+
+
+def _ensure_worker_ticket_delivery_column(bind):
+    """Safely add retry identity and uniqueness without discarding legacy rows.
+
+    SQLite and PostgreSQL provide transactional DDL for this additive migration. On
+    other dialects we stop before changing the schema rather than risk a partial
+    upgrade. Conflicting legacy rows are reported for operator resolution; this
+    migration never chooses or deletes records automatically.
+    """
+    if bind.dialect.name not in {"sqlite", "postgresql"}:
+        raise RuntimeError(
+            "Worker ticket schema upgrade requires transactional SQLite or PostgreSQL "
+            "DDL; back up the database and migrate it with a reviewed migration before startup."
+        )
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if "worker_authorization_tickets" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("worker_authorization_tickets")}
+        # Inspect conflicts before issuing ALTER TABLE. Some SQLite driver
+        # configurations do not start a transaction for DDL unless explicitly
+        # configured; preflight therefore guarantees legacy conflicts cannot
+        # leave a half-upgraded table even on those configurations.
+        duplicates = connection.execute(text(
+            "SELECT session_id, COUNT(*) AS row_count FROM worker_authorization_tickets "
+            "GROUP BY session_id HAVING COUNT(*) > 1 LIMIT 10"
+        )).all()
+        if duplicates:
+            conflicts = ", ".join(f"{row.session_id} ({row.row_count} records)" for row in duplicates)
+            raise RuntimeError(
+                "Cannot add unique worker-ticket session constraint: legacy duplicate "
+                f"session_id values found: {conflicts}. No records were deleted or selected. "
+                "Back up the database, review each ticket/session authorization, resolve "
+                "conflicts explicitly, then restart."
+            )
+        if "delivery_id_hash" in columns:
+            delivery_duplicates = connection.execute(text(
+                "SELECT worker_id, delivery_id_hash, COUNT(*) AS row_count "
+                "FROM worker_authorization_tickets WHERE delivery_id_hash IS NOT NULL "
+                "GROUP BY worker_id, delivery_id_hash "
+                "HAVING COUNT(*) > 1 LIMIT 10"
+            )).all()
+            if delivery_duplicates:
+                conflicts = ", ".join(
+                    f"worker {row.worker_id} ({row.row_count} records)" for row in delivery_duplicates
+                )
+                raise RuntimeError(
+                    "Cannot add unique worker-ticket delivery constraint: legacy duplicate "
+                    f"worker/delivery records found: {conflicts}. No records were deleted or "
+                    "selected. Back up the database, review and resolve the duplicate retry "
+                    "records explicitly, then restart."
+                )
+        if "delivery_id_hash" not in columns:
+            connection.execute(text(
+                "ALTER TABLE worker_authorization_tickets ADD COLUMN delivery_id_hash VARCHAR(64)"
+            ))
+        # Also resume safely if a prior process stopped after adding the column
+        # but before backfilling it.
+        records = connection.execute(text(
+            "SELECT ticket_id FROM worker_authorization_tickets WHERE delivery_id_hash IS NULL"
+        )).all()
+        for (ticket_id,) in records:
+            value = hashlib.sha256(f"legacy-ticket:{ticket_id}".encode()).hexdigest()
+            connection.execute(text(
+                "UPDATE worker_authorization_tickets SET delivery_id_hash = :value "
+                "WHERE ticket_id = :ticket_id"
+            ), {"value": value, "ticket_id": ticket_id})
+        duplicates = connection.execute(text(
+            "SELECT session_id, COUNT(*) AS row_count FROM worker_authorization_tickets "
+            "GROUP BY session_id HAVING COUNT(*) > 1 LIMIT 10"
+        )).all()
+        if duplicates:
+            conflicts = ", ".join(f"{row.session_id} ({row.row_count} records)" for row in duplicates)
+            raise RuntimeError(
+                "Cannot add unique worker-ticket session constraint: legacy duplicate "
+                f"session_id values found: {conflicts}. No records were deleted or selected. "
+                "Back up the database, review each ticket/session authorization, resolve "
+                "conflicts explicitly, then restart."
+            )
+        delivery_duplicates = connection.execute(text(
+            "SELECT worker_id, delivery_id_hash, COUNT(*) AS row_count "
+            "FROM worker_authorization_tickets GROUP BY worker_id, delivery_id_hash "
+            "HAVING COUNT(*) > 1 LIMIT 10"
+        )).all()
+        if delivery_duplicates:
+            conflicts = ", ".join(
+                f"worker {row.worker_id} ({row.row_count} records)" for row in delivery_duplicates
+            )
+            raise RuntimeError(
+                "Cannot add unique worker-ticket delivery constraint: legacy duplicate "
+                f"worker/delivery records found: {conflicts}. No records were deleted or "
+                "selected. Back up the database, review and resolve the duplicate retry "
+                "records explicitly, then restart."
+            )
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_worker_ticket_delivery "
+            "ON worker_authorization_tickets (worker_id, delivery_id_hash)"
+        ))
+        connection.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS uq_worker_ticket_session "
+            "ON worker_authorization_tickets (session_id)"
+        ))
+
+
+def _ensure_worker_ticket_key_id_column(bind):
+    """Add a nullable signing-key identifier for backwards-compatible ticket records."""
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if "worker_authorization_tickets" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("worker_authorization_tickets")}
+        if "key_id" not in columns:
+            connection.execute(text(
+                "ALTER TABLE worker_authorization_tickets ADD COLUMN key_id VARCHAR(32)"
+            ))
+
+
+def _ensure_worker_health_evidence_columns(bind):
+    """Add evidence needed to re-verify persisted health assertions on every read."""
+    with bind.begin() as connection:
+        inspector = inspect(connection)
+        if "worker_health_records" not in inspector.get_table_names():
+            return
+        columns = {column["name"] for column in inspector.get_columns("worker_health_records")}
+        if "evidence_payload" not in columns:
+            connection.execute(text(
+                "ALTER TABLE worker_health_records ADD COLUMN evidence_payload TEXT"
+            ))
+        if "signature_b64url" not in columns:
+            connection.execute(text(
+                "ALTER TABLE worker_health_records ADD COLUMN signature_b64url VARCHAR(2048)"
+            ))
 
 
 def get_db():

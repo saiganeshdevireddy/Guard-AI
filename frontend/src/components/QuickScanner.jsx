@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { GlobeIcon, AlertIcon, CheckIcon, ActivityIcon, WifiIcon } from './Icons';
 
@@ -7,6 +7,18 @@ export function QuickScanner({ onThreatDetected }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [reports, setReports] = useState([]);
+
+  const refreshReports = async () => {
+    try {
+      const response = await api.getInspectionReports(10);
+      setReports(Array.isArray(response.reports) ? response.reports : []);
+    } catch {
+      setReports([]);
+    }
+  };
+
+  useEffect(() => { refreshReports(); }, []);
 
   // Form states
   const [urlInput, setUrlInput] = useState('http://paypal-verification-account.xyz/login');
@@ -38,6 +50,7 @@ export function QuickScanner({ onThreatDetected }) {
         res = await api.scanNetwork(networkInput);
       }
       setResult(res);
+      if (res?.inspection) refreshReports();
       if (onThreatDetected) {
         onThreatDetected(res);
       }
@@ -61,7 +74,7 @@ export function QuickScanner({ onThreatDetected }) {
     <div className="glass-panel" style={{ padding: '24px', marginBottom: '28px' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '18px' }}>
         <div>
-          <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#fff' }}>Finder AI Threat Scanner</h2>
+          <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-main)' }}>Finder AI Threat Scanner</h2>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
             Real-time heuristic evaluation across web links, binary files, communications, and network profiles
           </p>
@@ -69,7 +82,7 @@ export function QuickScanner({ onThreatDetected }) {
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid rgba(255, 255, 255, 0.1)', paddingBottom: '12px', marginBottom: '18px' }}>
+      <div style={{ display: 'flex', gap: '8px', borderBottom: '1px solid var(--line-subtle)', paddingBottom: '12px', marginBottom: '18px' }}>
         {[
           { id: 'url', label: 'URL & Phishing' },
           { id: 'file', label: 'Suspicious File' },
@@ -174,16 +187,16 @@ export function QuickScanner({ onThreatDetected }) {
       </form>
 
       {error && (
-        <div style={{ marginTop: '16px', padding: '12px', background: 'rgba(239, 68, 68, 0.15)', border: '1px solid var(--crimson-danger)', borderRadius: '8px', color: '#ff6b6b', fontSize: '13px' }}>
+        <div style={{ marginTop: '16px', padding: '12px', background: 'var(--danger-soft)', border: '1px solid var(--crimson-danger)', borderRadius: '8px', color: 'var(--crimson-danger)', fontSize: '13px' }}>
           Error: {error}
         </div>
       )}
 
       {/* Results View */}
       {result && (
-        <div style={{ marginTop: '20px', padding: '16px', background: 'rgba(10, 15, 26, 0.85)', borderRadius: '8px', border: '1px solid rgba(0, 242, 254, 0.25)' }}>
+        <div style={{ marginTop: '20px', padding: '16px', background: 'var(--surface-subtle)', borderRadius: '8px', border: '1px solid var(--cyan-border)' }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-            <span style={{ fontSize: '14px', fontWeight: '700', color: '#fff' }}>
+            <span style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text-main)' }}>
               Threat Assessment Output: {result.report?.target}
             </span>
             <span className={`badge ${getSeverityBadgeClass(result.report?.severity)}`}>
@@ -191,12 +204,51 @@ export function QuickScanner({ onThreatDetected }) {
             </span>
           </div>
 
+          <p style={{ color: 'var(--amber-warning)', fontSize: '11px', marginBottom: '10px' }}>
+            Results are heuristic only. A low score is not proof that a URL or file is safe.
+          </p>
+
+          {result.inspection && (
+            <div role="status" style={{ marginBottom: '14px', padding: '12px', border: '1px solid var(--cyan-border)', borderRadius: '8px' }}>
+              <strong>Guard AI verdict: {result.inspection.verdict}</strong>
+              <span> · Report {result.inspection.report_id}</span>
+              <ul>{result.inspection.limitations?.map((item) => <li key={item}>{item}</li>)}</ul>
+            </div>
+          )}
+
+          {result.report?.phishing_analysis && (
+            <div style={{ marginBottom: '12px', fontSize: '12px', color: 'var(--text-main)' }}>
+              <strong>URL heuristic score: {result.report.phishing_analysis.score}/100</strong>
+              <span> · {result.report.phishing_analysis.classification}</span>
+              <p style={{ marginTop: '4px', color: 'var(--text-muted)' }}>{result.report.phishing_analysis.verdict_scope}</p>
+              {result.report.phishing_analysis.score_breakdown?.length > 0 && (
+                <ul>{result.report.phishing_analysis.score_breakdown.map((item) => (
+                  <li key={item.rule}>{item.rule}: +{item.points}</li>
+                ))}</ul>
+              )}
+              {result.report.phishing_analysis.redirect_targets_observed?.length > 0 && (
+                <p>Redirect-like query destinations observed (not fetched): {result.report.phishing_analysis.redirect_targets_observed.join(', ')}</p>
+              )}
+            </div>
+          )}
+
+          {result.report?.file_analysis && (
+            <div style={{ marginBottom: '12px', fontSize: '12px', color: 'var(--text-main)' }}>
+              <strong>Detected file type: {result.report.file_analysis.detected_file_type}</strong>
+              <span> · type status: {result.report.file_analysis.file_type_status || 'UNVERIFIED'}</span>
+              <ul>{result.report.file_analysis.optional_scanners?.map((scanner) => (
+                <li key={scanner.name}>{scanner.name}: {scanner.status}{scanner.finding ? ` · ${scanner.finding}` : ''}</li>
+              ))}</ul>
+              <p>{result.report.file_analysis.verdict_scope}</p>
+            </div>
+          )}
+
           {/* Indicators List */}
           <div style={{ marginBottom: '14px' }}>
             <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
               Specific Indicators Identified:
             </span>
-            <ul style={{ marginTop: '6px', paddingLeft: '18px', fontSize: '12px', color: '#e2e8f0' }}>
+            <ul style={{ marginTop: '6px', paddingLeft: '18px', fontSize: '12px', color: 'var(--text-main)' }}>
               {result.report?.all_indicators?.map((ind, i) => (
                 <li key={i} style={{ marginBottom: '4px' }}>{ind}</li>
               ))}
@@ -205,22 +257,32 @@ export function QuickScanner({ onThreatDetected }) {
 
           {/* Hybrid AI Intelligence */}
           {result.hybrid_explanation && (
-            <div style={{ padding: '12px', background: 'rgba(15, 23, 42, 0.7)', borderRadius: '6px', borderLeft: '3px solid var(--cyan-primary)' }}>
+            <div style={{ padding: '12px', background: 'var(--surface-subtle)', borderRadius: '6px', borderLeft: '3px solid var(--cyan-primary)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
                 <span className="badge badge-cyan" style={{ fontSize: '10px' }}>
                   {result.hybrid_explanation.mode}
                 </span>
-                <span style={{ fontSize: '11px', color: '#10b981' }}>
-                  Zero External PII Egress: Guaranteed
+                <span style={{ fontSize: '11px', color: 'var(--emerald-success)' }}>
+                  Local rules &bull; no external request
                 </span>
               </div>
-              <p style={{ fontSize: '12px', color: '#cbd5e1', lineHeight: '1.4' }}>
+              <p style={{ fontSize: '12px', color: 'var(--text-main)', lineHeight: '1.4' }}>
                 {result.hybrid_explanation.ai_summary}
               </p>
             </div>
           )}
         </div>
       )}
+
+      <section aria-label="Recent inspection reports" style={{ marginTop: '20px' }}>
+        <h3 style={{ color: 'var(--text-main)', fontSize: '14px' }}>Recent inspection reports</h3>
+        {reports.length === 0 ? <p style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No saved reports available.</p> : (
+          <ul>{reports.map((report) => <li key={report.report_id}>
+            {report.type} · {report.verdict} · {report.score}/100 · {new Date(report.created_at).toLocaleString()}
+            {report.sha256 ? ` · SHA-256 ${report.sha256}` : ''}
+          </li>)}</ul>
+        )}
+      </section>
     </div>
   );
 }

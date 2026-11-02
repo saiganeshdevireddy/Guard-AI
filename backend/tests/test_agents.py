@@ -1,6 +1,10 @@
 """
 Automated unit and integration tests for all Guard AI agents.
 """
+import os
+import subprocess
+from types import SimpleNamespace
+
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -26,7 +30,8 @@ def test_phishing_agent_detection():
     agent = PhishingDetectionAgent()
     # 1. Legitimate URL
     clean = agent.analyze_url("https://www.google.com")
-    assert clean["classification"] == "SAFE"
+    assert clean["classification"] == "NO_KNOWN_INDICATORS"
+    assert "does not establish" in clean["verdict_scope"]
     assert clean["score"] < 25
 
     # 2. Typosquatting of paypal
@@ -37,7 +42,7 @@ def test_phishing_agent_detection():
     # 3. IP host with suspicious keywords
     ip_host = agent.analyze_url("http://192.168.1.50/account/login-update")
     assert ip_host["score"] >= 50
-    assert any("bare IP" in ind for ind in ip_host["indicators"])
+    assert any("non-public IP" in ind for ind in ip_host["indicators"])
 
 
 def test_file_agent_detection():
@@ -45,7 +50,7 @@ def test_file_agent_detection():
     # 1. Benign text
     clean_bytes = b"Hello, this is a normal benign text file."
     res = agent.analyze_bytes(clean_bytes, "notes.txt")
-    assert res["classification"] == "CLEAN"
+    assert res["classification"] == "NO_KNOWN_INDICATORS"
     assert res["entropy"] < 5.0
 
     # 2. Ransomware volume shadow deletion heuristic
@@ -55,10 +60,106 @@ def test_file_agent_detection():
     assert any("Volume Shadow Copy Deletion" in r for r in res_ransom["matched_rules"])
 
     # 3. Disguised executable (PE header with .png extension)
-    fake_png = b"MZ" + b"\x00" * 200
-    res_disguised = agent.analyze_bytes(fake_png, "photo.png")
+    fake_png = bytearray(b"MZ" + b"\x00" * 200)
+    fake_png[0x3C:0x40] = (0x80).to_bytes(4, "little")
+    fake_png[0x80:0x84] = b"PE\x00\x00"
+    res_disguised = agent.analyze_bytes(bytes(fake_png), "photo.png")
     assert res_disguised["score"] >= 70
-    assert any("File Masquerading" in ind for ind in res_disguised["indicators"])
+    assert any("signature (Windows PE executable) conflicts" in ind for ind in res_disguised["indicators"])
+
+
+def test_url_analysis_redirects_false_positives_and_malformed_inputs():
+    agent = PhishingDetectionAgent()
+    ordinary = agent.analyze_url("https://example.com/news")
+    assert ordinary["score"] == 0
+    assert ordinary["redirect_targets_observed"] == []
+    assert ordinary["fetch_performed"] is False
+
+    # A brand substring inside a larger label is not itself proof of spoofing.
+    brand_substring = agent.analyze_url("https://notpaypal.com/")
+    assert not any("Brand-like" in finding for finding in brand_substring["indicators"])
+
+    redirect = agent.analyze_url("https://example.com/?next=https%3A%2F%2Fevil.test%2Flogin")
+    assert redirect["score"] >= 20
+    assert redirect["redirect_targets_observed"] == ["evil.test"]
+    assert "not proof of an actual redirect" in redirect["indicators"][-1]
+    assert redirect["fetch_performed"] is False
+
+    # A representative false-negative-shaped fixture remains unknown by policy.
+    false_negative_fixture = agent.analyze_url("https://attacker.example/content")
+    assert false_negative_fixture["score"] == 0
+    assert "does not establish" in false_negative_fixture["verdict_scope"]
+
+    for malformed in (
+        "https://user:pass@example.com/", "https://bad host.test/", "https://example.com:bad/",
+        "https://example.com/\x00path", "x" * 2049,
+    ):
+        assert agent.analyze_url(malformed)["classification"] == "MALFORMED_URL"
+
+    excessive_fields = "https://example.com/?" + "&".join(f"k{i}=v" for i in range(101))
+    bounded = agent.analyze_url(excessive_fields)
+    assert any("bounded" in finding for finding in bounded["indicators"])
+
+
+def test_file_signature_verification_and_optional_yara_failures(monkeypatch):
+    from app.agents.specialized import file_agent
+
+    agent = FileSecurityAgent()
+    fake_mz = agent.analyze_bytes(b"MZ" + b"\x00" * 200, "fake.exe")
+    assert fake_mz["detected_file_type"] == "Unknown / unsupported format"
+    assert fake_mz["is_executable"] is False
+
+    valid_png = agent.analyze_bytes(b"\x89PNG\r\n\x1a\n" + b"x", "image.png")
+    assert valid_png["file_type_verified"] is True
+    disguised_png = agent.analyze_bytes(b"%PDF-1.7", "image.png")
+    assert disguised_png["file_type_verified"] is False
+    assert disguised_png["score"] >= 35
+
+    office_container = agent.analyze_bytes(b"PK\x03\x04minimal", "claimed.docx")
+    assert office_container["file_type_status"] == "UNVERIFIED"
+    assert any("contents were not validated" in finding for finding in office_container["indicators"])
+
+    monkeypatch.setattr(file_agent.settings, "CLAMSCAN_PATH", "")
+    monkeypatch.setattr(file_agent.settings, "YARA_PATH", "yara-test")
+    monkeypatch.setattr(file_agent.settings, "YARA_RULES_PATH", "rules-test")
+    observed = {}
+
+    def yara_match(command, **kwargs):
+        observed["shell"] = kwargs["shell"]
+        observed["temp_path"] = command[-1]
+        return SimpleNamespace(returncode=0, stdout="TEST_RULE match", stderr="")
+
+    monkeypatch.setattr(file_agent.subprocess, "run", yara_match)
+    result = agent.analyze_bytes(b"harmless test bytes", "sample.bin")
+    assert result["classification"] == "SUSPICIOUS"
+    assert result["optional_scanners"][0]["status"] == "RULE_MATCH"
+    assert observed["shell"] is False
+    assert "TEST_RULE match" not in str(result)
+    assert not os.path.exists(observed["temp_path"])
+
+    def yara_timeout(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired("yara-test", 8)
+
+    monkeypatch.setattr(file_agent.subprocess, "run", yara_timeout)
+    timed_out = agent.analyze_bytes(b"harmless test bytes", "sample.bin")
+    assert timed_out["optional_scanners"][0]["status"] == "ERROR"
+
+    monkeypatch.setattr(file_agent.subprocess, "run", yara_match)
+    original_unlink = os.unlink
+    cleanup_paths = []
+
+    def unlink_failure(path):
+        cleanup_paths.append(path)
+        raise PermissionError("test cleanup failure")
+
+    monkeypatch.setattr(file_agent.os, "unlink", unlink_failure)
+    cleanup_failed = agent.analyze_bytes(b"harmless test bytes", "sample.bin")
+    assert cleanup_failed["optional_scanners"][-1]["status"] == "FAILED"
+    assert any("cleanup failed" in finding.lower() for finding in cleanup_failed["indicators"])
+    monkeypatch.setattr(file_agent.os, "unlink", original_unlink)
+    for path in cleanup_paths:
+        if os.path.exists(path):
+            os.unlink(path)
 
 
 def test_wifi_agent_security_audit():
@@ -110,8 +211,9 @@ def test_controller_threat_orchestration():
     assert threat.severity == "CRITICAL"
     # Verify Defence vault was auto-locked
     assert controller.defence.is_vault_locked is True
-    # Verify Offence emergency lockdown was engaged
-    assert controller.offence.lockdown_level == "HEIGHTENED"
+    # Critical detections do not self-approve a high-impact emergency action.
+    assert controller.offence.lockdown_level == "STANDARD"
+    assert threat.status == "AWAITING_OPERATOR_REVIEW"
 
 
 def test_informer_voice_briefing():

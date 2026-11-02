@@ -1,136 +1,83 @@
 import React, { useState } from 'react';
-import { CpuIcon, ShieldIcon, AlertIcon, VolumeIcon, WifiIcon, ActivityIcon, GlobeIcon, LockIcon } from './Icons';
+import { CpuIcon, ShieldIcon, AlertIcon, VolumeIcon, ActivityIcon, GlobeIcon, LockIcon } from './Icons';
 
-export function AgentGrid({ agents = [] }) {
+const coreRoles = [
+  { id: 'controller_ai', name: 'Controller AI', label: 'Orchestration', color: 'var(--cyan-primary)', Icon: CpuIcon },
+  { id: 'finder_ai', name: 'Finder AI', label: 'Threat discovery', color: 'var(--amber-warning)', Icon: ActivityIcon },
+  { id: 'defence_ai', name: 'Defence AI', label: 'Protection', color: 'var(--emerald-success)', Icon: LockIcon },
+  { id: 'offence_ai', name: 'Offence AI', label: 'Response analysis', color: 'var(--crimson-danger)', Icon: AlertIcon },
+  { id: 'informer_ai', name: 'Informer AI', label: 'Briefings', color: 'var(--purple-accent)', Icon: VolumeIcon },
+];
+
+export function AgentGrid({ agents = [], stateReceived = false, updatedAt = null }) {
   const [selectedAgent, setSelectedAgent] = useState(null);
-
-  // Map agents by ID or prefix
-  const primaryIds = ['controller_ai', 'finder_ai', 'defence_ai', 'offence_ai', 'informer_ai'];
-  const primaryAgents = agents.filter(a => primaryIds.includes(a.id));
-  const specializedAgents = agents.filter(a => !primaryIds.includes(a.id));
-
-  const getAgentTheme = (id) => {
-    switch (id) {
-      case 'controller_ai': return { color: '#00f2fe', icon: <CpuIcon size={24} color="#00f2fe" />, label: 'Central Coordinator' };
-      case 'finder_ai': return { color: '#f59e0b', icon: <ActivityIcon size={24} color="#f59e0b" />, label: 'Threat Discovery' };
-      case 'defence_ai': return { color: '#10b981', icon: <LockIcon size={24} color="#10b981" />, label: 'Cryptographic Maze' };
-      case 'offence_ai': return { color: '#ef4444', icon: <AlertIcon size={24} color="#ef4444" />, label: 'Emergency Containment' };
-      case 'informer_ai': return { color: '#8b5cf6', icon: <VolumeIcon size={24} color="#8b5cf6" />, label: 'Voice Informant' };
-      default: return { color: '#38bdf8', icon: <GlobeIcon size={24} color="#38bdf8" />, label: 'Specialized Agent' };
-    }
+  const byId = new Map(agents.map((agent) => [agent.id, agent]));
+  const coreIds = new Set(coreRoles.map(({ id }) => id));
+  const specialized = agents.filter((agent) => !coreIds.has(agent.id));
+  const heartbeatLabel = (value) => {
+    if (!value) return 'No heartbeat';
+    const date = new Date(value);
+    return Number.isNaN(date.getTime()) ? 'Unknown heartbeat' : `Seen ${date.toLocaleTimeString()}`;
   };
 
   return (
-    <div style={{ marginBottom: '28px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px' }}>
+    <section className="agent-command" aria-labelledby="agent-command-title">
+      <div className="section-heading">
         <div>
-          <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#ffffff', letterSpacing: '0.02em' }}>
-            Multi-Agent Command Matrix
-          </h2>
-          <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-            Coordinated autonomous agents exchanging intelligence over real-time event bus
-          </p>
+          <p className="eyebrow">GUARD AI · OPERATIONS</p>
+          <h2 id="agent-command-title">Agent command network</h2>
+          <p className="section-description">Agent availability and activity are read from the connected backend.</p>
         </div>
-        <span className="badge badge-cyan">{agents.length || 10} Agents Active & Synced</span>
+        <span className={`badge ${agents.length ? 'badge-cyan' : 'badge-medium'}`}>{agents.length} reported</span>
       </div>
 
-      {/* Primary 5 Agents Grid */}
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
-        gap: '14px',
-        marginBottom: '16px',
-      }}>
-        {primaryAgents.map((agent) => {
-          const theme = getAgentTheme(agent.id);
-          const isSelected = selectedAgent?.id === agent.id;
-
+      <div className="agent-network" aria-label="Connected agent network">
+        <svg className="agent-network-lines" viewBox="0 0 1000 430" preserveAspectRatio="none" aria-hidden="true">
+          <path d="M500 215 L180 95 M500 215 L820 95 M500 215 L180 335 M500 215 L820 335" />
+        </svg>
+        <div className="agent-core">
+          <div className="agent-core-orbit agent-core-orbit-one" />
+          <div className="agent-core-orbit agent-core-orbit-two" />
+          <span className="agent-core-icon"><ShieldIcon size={32} /></span>
+          <strong>GUARD AI CORE</strong>
+          <span>Autonomous Controller · {stateReceived === null ? 'checking' : stateReceived ? `${agents.length} states` : 'unavailable'}</span>
+        </div>
+        {coreRoles.map(({ id, name, label, color, Icon }) => {
+          const agent = byId.get(id);
+          const selected = selectedAgent?.id === id;
           return (
-            <div
-              key={agent.id}
-              onClick={() => setSelectedAgent(agent)}
-              className="glass-panel"
-              style={{
-                padding: '16px',
-                cursor: 'pointer',
-                borderColor: isSelected ? theme.color : undefined,
-                background: isSelected ? 'rgba(26, 35, 56, 0.95)' : undefined,
-              }}
+            <button
+              type="button"
+              key={id}
+              className={`agent-network-node agent-node-${id.replace('_ai', '')}${selected ? ' is-selected' : ''}`}
+              onClick={() => setSelectedAgent(agent || { id, name, status: 'UNAVAILABLE' })}
+              aria-pressed={selected}
+              style={{ '--agent-color': color }}
             >
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '10px' }}>
-                <div style={{
-                  width: '38px',
-                  height: '38px',
-                  borderRadius: '8px',
-                  background: 'rgba(10, 15, 26, 0.8)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  border: `1px solid ${theme.color}40`,
-                }}>
-                  {theme.icon}
-                </div>
-                <span className="badge badge-low" style={{ fontSize: '10px' }}>
-                  {agent.status}
-                </span>
-              </div>
-
-              <h3 style={{ fontSize: '15px', fontWeight: '700', color: '#fff', marginBottom: '3px' }}>
-                {agent.name}
-              </h3>
-              <p style={{ fontSize: '11px', color: theme.color, fontWeight: '600', marginBottom: '10px' }}>
-                {theme.label}
-              </p>
-              
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'space-between',
-                fontSize: '11px',
-                color: 'var(--text-dim)',
-                paddingTop: '8px',
-                borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-                fontFamily: 'var(--font-mono)',
-              }}>
-                <span>Tasks: {agent.task_count || 0}</span>
-                <span style={{ color: '#10b981' }}>Heartbeat: OK</span>
-              </div>
-            </div>
+              <span className="agent-node-icon"><Icon size={19} /></span>
+              <span className="agent-node-copy"><strong>{agent?.name || name}</strong><small>{label}</small></span>
+              <span className={`agent-state ${agent ? (agent.status === 'ACTIVE' ? 'is-active' : 'is-idle') : 'is-unknown'}`}>
+                <i />{!stateReceived ? (stateReceived === null ? 'LOADING' : 'UNAVAILABLE') : agent?.status || 'NOT REPORTED'}
+              </span>
+              {agent && stateReceived && <span className="agent-node-meta">{agent.task_count ?? 0} tasks · {heartbeatLabel(agent.last_heartbeat)}</span>}
+              {stateReceived && updatedAt && <span className="agent-node-meta">API update {updatedAt.toLocaleTimeString()}</span>}
+            </button>
           );
         })}
       </div>
 
-      {/* Specialized Detection Sub-Agents Strip */}
-      <div className="glass-panel" style={{ padding: '12px 18px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-          <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-            Specialized Neural Detection Agents:
-          </span>
-        </div>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
-          {specializedAgents.map((sub) => (
-            <div
-              key={sub.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                padding: '5px 12px',
-                background: 'rgba(10, 15, 26, 0.6)',
-                borderRadius: '6px',
-                border: '1px solid rgba(0, 242, 254, 0.1)',
-                fontSize: '12px',
-              }}
-            >
-              <div style={{ width: '6px', height: '6px', borderRadius: '50%', background: '#00f2fe' }} />
-              <span style={{ color: '#fff', fontWeight: '500' }}>{sub.name}</span>
-              <span style={{ fontSize: '10px', color: 'var(--text-dim)', fontFamily: 'var(--font-mono)' }}>
-                ({sub.task_count} ops)
-              </span>
-            </div>
-          ))}
-        </div>
+      {selectedAgent && (
+        <p className="agent-selection" role="status">
+          {selectedAgent.name}: {selectedAgent.status === 'UNAVAILABLE' ? 'no status received from the backend.' : `backend status ${selectedAgent.status}.`}
+        </p>
+      )}
+
+      <div className="specialized-agents">
+        <span className="eyebrow">SPECIALIZED DETECTION</span>
+          {stateReceived && specialized.length ? specialized.map((agent) => (
+          <span className="specialized-agent" key={agent.id}><GlobeIcon size={14} />{agent.name}<small>{agent.status || 'UNKNOWN'}</small></span>
+        )) : <span className="specialized-empty">{stateReceived === null ? 'Checking agent states…' : stateReceived ? 'No specialized agent status reported.' : 'Agent status unavailable.'}</span>}
       </div>
-    </div>
+    </section>
   );
 }

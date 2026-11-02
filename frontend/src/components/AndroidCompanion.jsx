@@ -1,109 +1,82 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
-import { SmartphoneIcon, LockIcon, CheckIcon } from './Icons';
+import { SmartphoneIcon, LockIcon } from './Icons';
 
 export function AndroidCompanion() {
   const [device, setDevice] = useState(null);
-  const [locked, setLocked] = useState(false);
   const [loading, setLoading] = useState(false);
-
-  useEffect(() => {
-    loadDeviceStatus();
-  }, []);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
 
   const loadDeviceStatus = async () => {
     try {
-      const res = await api.getAndroidStatus();
-      setDevice(res);
-      setLocked(res.remote_lock_engaged);
+      setDevice(await api.getAndroidStatus());
+      setError('');
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     }
   };
 
-  const handleRemoteLock = async () => {
+  useEffect(() => { loadDeviceStatus(); }, []);
+
+  const handleDemoLock = async () => {
     if (!device) return;
     setLoading(true);
+    setError('');
+    setNotice('');
     try {
-      await api.remoteLockAndroid(device.device_id);
-      setLocked(true);
+      const result = await api.remoteLockAndroid(device.device_id);
+      setNotice(result.message);
       await loadDeviceStatus();
     } catch (err) {
-      console.error(err);
+      setError(err.message);
     } finally {
       setLoading(false);
     }
   };
 
-  if (!device) return null;
-
   return (
-    <div className="glass-panel" style={{ padding: '24px', marginBottom: '28px' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+    <section className="glass-panel" style={{ padding: '24px', marginBottom: '28px' }}>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '14px', marginBottom: '16px', flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-          <div style={{
-            width: '36px',
-            height: '36px',
-            borderRadius: '8px',
-            background: 'rgba(0, 242, 254, 0.1)',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            border: '1px solid rgba(0, 242, 254, 0.3)',
-          }}>
-            <SmartphoneIcon size={20} color="#00f2fe" />
-          </div>
+          <SmartphoneIcon size={22} color="var(--cyan-primary)" />
           <div>
-            <h2 style={{ fontSize: '18px', fontWeight: '700', color: '#fff' }}>
-              Android Mobile Companion
-            </h2>
-            <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>
-              Cross-platform device telemetry & remote defensive lock coordination
-            </p>
+            <h2 style={{ fontSize: '18px', fontWeight: '700', color: 'var(--text-main)' }}>Android Companion</h2>
+            <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Demo workflow; no native Android app is paired</p>
           </div>
         </div>
-
-        <button
-          onClick={handleRemoteLock}
-          disabled={loading || locked}
-          className={`btn ${locked ? 'btn-outline' : 'btn-danger'}`}
-          style={{ fontSize: '12px' }}
-        >
-          <LockIcon size={14} />
-          {locked ? 'Remote Lock Engaged' : 'Dispatch Defensive Lock'}
+        <button onClick={handleDemoLock} disabled={!device || loading || device.remote_lock_engaged} className="btn btn-outline">
+          <LockIcon size={15} />
+          {device?.remote_lock_engaged ? 'Demo lock active' : loading ? 'Updating demo…' : 'Run demo lock action'}
         </button>
       </div>
 
-      {/* Device Telemetry Card */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-        <div style={{ background: 'rgba(10, 15, 26, 0.65)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Device Model</span>
-          <p style={{ fontSize: '14px', fontWeight: '600', color: '#fff', marginTop: '2px' }}>{device.device_name}</p>
-        </div>
-
-        <div style={{ background: 'rgba(10, 15, 26, 0.65)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>OS & Security Patch</span>
-          <p style={{ fontSize: '14px', fontWeight: '600', color: '#00f2fe', marginTop: '2px' }}>{device.os_version}</p>
-        </div>
-
-        <div style={{ background: 'rgba(10, 15, 26, 0.65)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Battery & Wireless</span>
-          <p style={{ fontSize: '14px', fontWeight: '600', color: '#10b981', marginTop: '2px' }}>
-            {device.battery_percent}% &bull; {device.wifi_ssid}
-          </p>
-        </div>
-
-        <div style={{ background: 'rgba(10, 15, 26, 0.65)', padding: '12px', borderRadius: '8px', border: '1px solid rgba(255, 255, 255, 0.05)' }}>
-          <span style={{ fontSize: '11px', color: 'var(--text-dim)', textTransform: 'uppercase' }}>Permission Audit</span>
-          <p style={{ fontSize: '14px', fontWeight: '600', color: '#e2e8f0', marginTop: '2px' }}>
-            {device.permission_audit?.apps_with_sms_read} SMS &bull; {device.permission_audit?.apps_with_accessibility} Acc.
-          </p>
-        </div>
+      <div role="note" style={{ padding: '12px 14px', borderRadius: '9px', background: 'var(--warning-soft)', border: '1px solid var(--warning-border)', color: 'var(--amber-warning)', fontSize: '12px', marginBottom: '16px' }}>
+        Demonstration data only. Telemetry and lock changes stay in backend memory. No real device is contacted or locked.
       </div>
 
-      <div style={{ fontSize: '11px', color: 'var(--text-dim)', fontStyle: 'italic' }}>
-        Note: The Android companion communicates with Guard AI via authenticated companion APIs, honoring Android runtime permissions without claiming silent OS monitoring.
-      </div>
-    </div>
+      {error && <p role="alert" style={{ color: 'var(--crimson-danger)', marginBottom: '12px' }}>{error}</p>}
+      {notice && <p role="status" style={{ color: 'var(--text-muted)', marginBottom: '12px' }}>{notice}</p>}
+      {device ? (
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: '12px' }}>
+          <div style={{ padding: '14px', borderRadius: '9px', background: 'var(--surface-subtle)', border: '1px solid var(--line-subtle)' }}>
+            <span style={{ color: 'var(--text-dim)', fontSize: '10px', textTransform: 'uppercase' }}>Demo device</span>
+            <p style={{ color: 'var(--text-main)', fontWeight: 650, marginTop: '4px' }}>{device.device_name}</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{device.connection_status}</p>
+          </div>
+          <div style={{ padding: '14px', borderRadius: '9px', background: 'var(--surface-subtle)', border: '1px solid var(--line-subtle)' }}>
+            <span style={{ color: 'var(--text-dim)', fontSize: '10px', textTransform: 'uppercase' }}>Example telemetry</span>
+            <p style={{ color: 'var(--text-main)', fontWeight: 650, marginTop: '4px' }}>{device.battery_percent}% battery</p>
+            <p style={{ color: 'var(--text-muted)', fontSize: '11px' }}>{device.wifi_ssid}</p>
+          </div>
+          <div style={{ padding: '14px', borderRadius: '9px', background: 'var(--surface-subtle)', border: '1px solid var(--line-subtle)' }}>
+            <span style={{ color: 'var(--text-dim)', fontSize: '10px', textTransform: 'uppercase' }}>Demo lock state</span>
+            <p style={{ color: device.remote_lock_engaged ? 'var(--amber-warning)' : 'var(--text-main)', fontWeight: 650, marginTop: '4px' }}>
+              {device.remote_lock_engaged ? 'Active in demo only' : 'Not activated'}
+            </p>
+          </div>
+        </div>
+      ) : !error ? <p style={{ color: 'var(--text-muted)' }}>Loading companion status…</p> : null}
+    </section>
   );
 }

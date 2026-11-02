@@ -68,7 +68,15 @@ class FinderAI(BaseAgent):
         phishing_res = self.phishing_agent.analyze_url(url)
         browser_res = self.browser_agent.inspect_destination(url)
 
-        max_score = max(phishing_res["score"], 100 - browser_res["security_score"])
+        # Header posture is only scored when real response headers were supplied.
+        # The local URL scan does not fetch remote pages, so default headers must
+        # never be treated as evidence that a destination is insecure or safe.
+        browser_score = (
+            100 - browser_res["security_score"]
+            if browser_res.get("headers_available") and browser_res.get("security_score") is not None
+            else 0
+        )
+        max_score = max(phishing_res["score"], browser_score)
         severity = "LOW"
         if max_score >= 80:
             severity = "CRITICAL"

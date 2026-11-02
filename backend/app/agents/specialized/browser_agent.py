@@ -57,6 +57,20 @@ class BrowserSecurityAgent(BaseAgent):
         is_https = parsed.scheme.lower() == "https"
         headers = {k.lower(): v for k, v in (mock_headers or {}).items()}
 
+        if mock_headers is None:
+            result = {
+                "url": url,
+                "is_https": is_https,
+                "security_score": None,
+                "safety_status": "NOT_CHECKED",
+                "headers_available": False,
+                "warnings": ["Live response headers were not fetched; header security is unverified."],
+                "sandbox_ready": False,
+                "disclaimer": "URL heuristics do not prove a destination safe. This build does not retrieve remote page content.",
+            }
+            self.metrics["last_inspection"] = result
+            return result
+
         warnings: List[str] = []
         score = 100  # Start with perfect score and deduct for deficiencies
 
@@ -92,6 +106,7 @@ class BrowserSecurityAgent(BaseAgent):
             "safety_status": safety_status,
             "warnings": warnings if warnings else ["All fundamental browser security headers are enforced."],
             "sandbox_ready": True,
+            "headers_available": True,
             "disclaimer": "Isolated browsing mitigates malware exposure, but does not guarantee absolute immunity against zero-day browser vulnerabilities."
         }
         self.metrics["last_inspection"] = result

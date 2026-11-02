@@ -1,40 +1,26 @@
 import React from 'react';
 import { ShieldIcon, VolumeIcon, VolumeMuteIcon, AlertIcon } from './Icons';
 
-export function Navbar({ isMuted, onToggleMute, isSpeaking, emergencyStatus, localPrivacyMode, onTogglePrivacy }) {
+function ThemeIcon({ mode }) {
+  if (mode === 'dark') return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><path d="M20.5 15.5A8.5 8.5 0 0 1 8.5 3.5 8.5 8.5 0 1 0 20.5 15.5Z" /></svg>;
+  if (mode === 'light') return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><circle cx="12" cy="12" r="4" /><path d="M12 2v2m0 16v2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M2 12h2m16 0h2M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" /></svg>;
+  return <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true"><rect x="3" y="4" width="18" height="13" rx="2" /><path d="M8 21h8m-4-4v4" /></svg>;
+}
+
+export function Navbar({ isMuted, onToggleMute, isSpeaking, emergencyStatus, privacyMode, themePreference, onThemeChange, username, onLogout }) {
   const isEmergency = emergencyStatus?.is_active;
 
   return (
-    <header style={{
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'space-between',
-      padding: '16px 28px',
-      borderBottom: '1px solid rgba(0, 242, 254, 0.2)',
-      background: 'rgba(10, 13, 20, 0.85)',
-      backdropFilter: 'blur(16px)',
-      position: 'sticky',
-      top: 0,
-      zIndex: 100,
-    }}>
+    <header className="app-navbar">
       {/* Brand Title */}
       <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-        <div style={{
-          width: '42px',
-          height: '42px',
-          borderRadius: '10px',
-          background: isEmergency ? 'linear-gradient(135deg, #ef4444, #991b1b)' : 'linear-gradient(135deg, #00f2fe, #4facfe)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          boxShadow: isEmergency ? '0 0 20px rgba(239, 68, 68, 0.6)' : '0 0 20px rgba(0, 242, 254, 0.5)',
-        }}>
-          <ShieldIcon size={24} color="#050b14" />
+        <div className={`brand-mark ${isEmergency ? 'brand-mark-emergency' : ''}`}>
+          <ShieldIcon size={24} color="var(--icon-on-brand)" />
         </div>
         <div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-            <span style={{ fontSize: '20px', fontWeight: '800', letterSpacing: '0.05em', color: '#ffffff' }}>GUARD AI</span>
-            <span className="badge badge-cyan" style={{ fontSize: '10px' }}>v1.0 MIL-SPEC</span>
+            <span style={{ fontSize: '20px', fontWeight: '800', letterSpacing: '0.05em', color: 'var(--text-main)' }}>GUARD AI</span>
+            <span className="badge badge-cyan" style={{ fontSize: '10px' }}>v1.0 LOCAL</span>
           </div>
           <p style={{ fontSize: '12px', color: 'var(--text-muted)' }}>Multi-Agent Cyber Defence & Privacy Platform</p>
         </div>
@@ -48,30 +34,39 @@ export function Navbar({ isMuted, onToggleMute, isSpeaking, emergencyStatus, loc
       )}
 
       {/* Right Controls */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-        {/* Privacy Mode Toggle */}
-        <button
-          onClick={onTogglePrivacy}
-          className="btn btn-outline"
-          title="Toggle between 100% Local Offline Intelligence and Cloud AI Assistance"
-          style={{ padding: '6px 12px', fontSize: '12px' }}
-        >
-          <span style={{
-            display: 'inline-block',
-            width: '8px',
-            height: '8px',
-            borderRadius: '50%',
-            backgroundColor: localPrivacyMode ? '#10b981' : '#8b5cf6',
-            boxShadow: localPrivacyMode ? '0 0 8px #10b981' : '0 0 8px #8b5cf6',
-          }} />
-          {localPrivacyMode ? 'Privacy: 100% Local' : 'Mode: Hybrid Cloud'}
-        </button>
+      <div className="nav-controls">
+        <div className="theme-switcher" role="group" aria-label="Color theme">
+          {[
+            ['dark', 'Dark'],
+            ['light', 'Light'],
+            ['system', 'System'],
+          ].map(([mode, label]) => (
+            <button
+              key={mode}
+              type="button"
+              className={`theme-option ${themePreference === mode ? 'is-selected' : ''}`}
+              aria-label={`${label} theme`}
+              aria-pressed={themePreference === mode}
+              title={`${label} theme`}
+              onClick={() => onThemeChange(mode)}
+            >
+              <ThemeIcon mode={mode} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </div>
+        <span className="badge badge-cyan privacy-badge" title="Privacy mode reported by backend">
+          Privacy: {privacyMode || 'Unknown'}
+        </span>
+        <div className="nav-session" aria-label={`Signed in as ${username}`}>
+          <span className="nav-session-user">{username}</span>
+          <button className="btn btn-outline nav-logout" type="button" onClick={onLogout}>Sign out</button>
+        </div>
 
         {/* Informer Voice Control */}
         <button
           onClick={onToggleMute}
-          className={`btn ${isMuted ? 'btn-outline' : 'btn-primary'}`}
-          style={{ padding: '6px 14px', fontSize: '12px' }}
+          className={`btn ${isMuted ? 'btn-outline' : 'btn-primary'} voice-control`}
           title={isMuted ? 'Unmute Informer AI Voice Briefings' : 'Mute Informer AI Voice'}
         >
           {isMuted ? <VolumeMuteIcon size={16} /> : <VolumeIcon size={16} />}

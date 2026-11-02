@@ -1,0 +1,7 @@
+backend/
+blockchain/
+docs/
+.vscode/
+.env*
+*.db
+*.sqlite3

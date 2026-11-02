@@ -16,8 +16,8 @@ from app.agents.finder import FinderAI
 from app.agents.informer import InformerAI
 from app.agents.offence import OffenceAI
 from app.core.audit_chain import AuditChainService
-from app.core.permissions import AgentRole, Permission, check_permission
 from app.database import AgentState, SessionLocal, ThreatEvent
+from app.agents.specialized.app_monitor_agent import ApplicationBehaviourAgent
 
 
 class ControllerAI(BaseAgent):
@@ -38,6 +38,7 @@ class ControllerAI(BaseAgent):
         self.defence = DefenceAI()
         self.offence = OffenceAI()
         self.informer = InformerAI()
+        self.app_monitor = ApplicationBehaviourAgent()
 
         # Agent registry
         self.agents: Dict[str, BaseAgent] = {
@@ -52,6 +53,7 @@ class ControllerAI(BaseAgent):
             self.finder.wifi_agent.agent_id: self.finder.wifi_agent,
             self.finder.browser_agent.agent_id: self.finder.browser_agent,
             self.finder.spam_agent.agent_id: self.finder.spam_agent,
+            self.app_monitor.agent_id: self.app_monitor,
         }
 
     def _register_event_handlers(self):
@@ -105,7 +107,7 @@ class ControllerAI(BaseAgent):
         db.commit()
         db.refresh(threat)
 
-        # 2. Immutable Cryptographic Audit Log
+        # 2. Tamper-evident cryptographic audit log
         AuditChainService.record_event(
             db,
             actor="Controller AI",
@@ -125,16 +127,9 @@ class ControllerAI(BaseAgent):
             self.defence.lock_vault(reason=f"Controller defensive trigger for {severity} threat ({indicator})")
 
         if severity == "CRITICAL":
-            # Command Offence AI to activate emergency containment
-            self.offence.activate_emergency_lockdown(
-                db=db,
-                level="HEIGHTENED",
-                reason=f"Automated defensive escalation for critical threat: {indicator}",
-                activated_by="Controller AI",
-                human_confirmed=True,  # Automated defensive containment to prevent active spread
-                target=indicator
-            )
-            threat.status = "CONTAINMENT_TRIGGERED"
+            # Automated detection must not impersonate operator approval. Keep
+            # the incident visible and require a deliberate dashboard action.
+            threat.status = "AWAITING_OPERATOR_REVIEW"
             db.commit()
 
         # 4. Notify Informer AI for voice briefing

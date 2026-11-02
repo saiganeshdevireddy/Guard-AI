@@ -10,7 +10,6 @@ Provides an isolated environment for safe preview of suspicious web pages and fi
 import re
 from typing import Any, Dict
 from urllib.parse import urlparse
-import httpx
 
 from app.agents.specialized.browser_agent import BrowserSecurityAgent
 
@@ -26,57 +25,28 @@ class SandboxEngine:
 
     async def inspect_url_safely(self, target_url: str) -> Dict[str, Any]:
         """
-        Fetches web page text under strict isolation limits,
-        sanitizes all active script payloads, and generates a sandboxed preview document.
+        Provides a local-only URL review without fetching or rendering remote content.
+        A real isolated browser runtime is not included in this prototype; fetching
+        arbitrary URLs from the backend would expose local services to SSRF.
         """
-        # Ensure scheme
         url = target_url.strip()
-        if not url.startswith(("http://", "https://")):
+        if not url:
+            raise ValueError("URL cannot be empty")
+        if "://" not in url:
             url = "https://" + url
-
         parsed = urlparse(url)
         headers_audit = self.browser_inspector.inspect_destination(url)
-
-        raw_html = ""
-        fetch_error = None
-        status_code = None
-
-        try:
-            # Safe HTTP fetch with tight 5-second timeout and no redirect loops
-            async with httpx.AsyncClient(timeout=5.0, follow_redirects=True, verify=False) as client:
-                resp = await client.get(url, headers={"User-Agent": "GuardAI-Isolated-Sandbox-Inspector/1.0"})
-                status_code = resp.status_code
-                # Limit size to prevent DoS / zip bomb
-                content_bytes = resp.content[:self.max_download_bytes]
-                raw_html = content_bytes.decode("utf-8", errors="replace")
-        except Exception as e:
-            fetch_error = str(e)
-            raw_html = f"<html><body><div style='padding:20px;color:#ff5555;font-family:sans-serif;'><h3>[Sandbox Isolated Connection Error]</h3><p>Could not safely establish connection: {str(e)}</p></div></body></html>"
-
-        # Sanitize HTML to prevent code execution
-        sanitized_html = self.browser_inspector.sanitize_html_for_sandbox(raw_html)
-
-        # Inject high-visibility sandbox banner
-        banner = (
-            "<div style='background:#1a1d24;border-bottom:2px solid #ffaa00;padding:12px 16px;color:#fff;font-family:sans-serif;font-size:13px;display:flex;align-items:center;justify-content:space-between;'>"
-            "<span><strong>[GUARD AI ISOLATED SANDBOX]</strong> Scripts Disabled &bull; Network Storage Blocked &bull; Safe Visual Mode</span>"
-            "<span style='background:#ffaa00;color:#000;padding:2px 8px;border-radius:4px;font-weight:bold;font-size:11px;'>RESTRICTED</span>"
-            "</div>"
-        )
-        safe_preview_doc = f"<!DOCTYPE html><html><head><meta charset='utf-8'><title>Sandbox Preview</title></head><body style='margin:0;padding:0;'>{banner}{sanitized_html}</body></html>"
-
         return {
-            "url": target_url,
-            "status_code": status_code,
-            "fetch_error": fetch_error,
+            "url": url,
+            "preview_available": False,
+            "status_code": None,
             "security_headers": headers_audit,
-            "sanitized_html": safe_preview_doc,
-            "raw_size_bytes": len(raw_html),
-            "scripts_blocked": True,
-            "warning": (
-                "Notice: Isolated browsing renders static visual content with active JavaScript disabled. "
-                "This significantly reduces threat vectors, but sandbox isolation is not a substitute for complete environment air-gapping."
-            )
+            "warning": "Remote content was not fetched or rendered. This prototype has no hardened isolated browser runtime.",
+            "limitations": [
+                "URL checks are local heuristics and do not establish that a destination is safe.",
+                "Live response headers and page content were not inspected.",
+                "Use a separate disposable virtual machine or browser profile for suspicious links.",
+            ],
         }
 
     def inspect_file_safely(self, filename: str, content: bytes) -> Dict[str, Any]:

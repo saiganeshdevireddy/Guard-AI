@@ -4,18 +4,23 @@ Guard AI - Main FastAPI Application Server.
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import text
 
 from app.config import settings
 from app.core.audit_chain import AuditChainService
-from app.database import SessionLocal, init_db
+from app.database import SessionLocal, engine, init_db
 from app.routers import (
     agents_api,
+    auth_api,
     android_api,
+    pipeline_api,
     audit_api,
+    browser_sessions_api,
     emergency_api,
     sandbox_api,
     scanner_api,
     vault_api,
+    workers_api,
 )
 
 
@@ -31,8 +36,10 @@ async def lifespan(app: FastAPI):
                 db,
                 actor="Guard AI Genesis Engine",
                 event_type="SYSTEM_GENESIS_INITIALIZED",
-                payload={"version": settings.VERSION, "platform": "Windows/Android Ready"}
+                payload={"version": settings.VERSION, "platform": "Local prototype"}
             )
+        from app.services.worker_communication import WorkerCommunicationService
+        WorkerCommunicationService().record_key_configuration(db)
     finally:
         db.close()
     yield
@@ -49,32 +56,45 @@ app = FastAPI(
 # CORS Middleware configuration
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Permits Vite frontend on any port/host
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"chrome-extension://[a-p]{32}",
+    allow_credentials=False,
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type", "Authorization"],
 )
 
 # Register All API Routers
 app.include_router(agents_api.router, prefix=settings.API_V1_STR)
+app.include_router(auth_api.router, prefix="/api")
 app.include_router(scanner_api.router, prefix=settings.API_V1_STR)
 app.include_router(vault_api.router, prefix=settings.API_V1_STR)
 app.include_router(audit_api.router, prefix=settings.API_V1_STR)
 app.include_router(emergency_api.router, prefix=settings.API_V1_STR)
 app.include_router(sandbox_api.router, prefix=settings.API_V1_STR)
+app.include_router(browser_sessions_api.router, prefix=settings.API_V1_STR)
+app.include_router(workers_api.router, prefix=settings.API_V1_STR)
+app.include_router(workers_api.internal_router, prefix=settings.API_V1_STR)
 app.include_router(android_api.router, prefix=settings.API_V1_STR)
+app.include_router(pipeline_api.router)
 
 
 @app.get("/api/health")
 def health_check():
     """System health check and diagnostic ping."""
+    database_status = "OPERATIONAL"
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception:
+        database_status = "UNAVAILABLE"
     return {
-        "status": "OPERATIONAL",
+        "status": "OPERATIONAL" if database_status == "OPERATIONAL" else "DEGRADED",
         "system": settings.PROJECT_NAME,
         "version": settings.VERSION,
         "privacy_mode": "LOCAL_ONLY" if settings.LOCAL_ONLY_MODE else "HYBRID_CLOUD",
-        "database": "SQLite Initialized",
-        "encryption": "AES-256-GCM / PBKDF2 Active"
+        "database": database_status,
+        "encryption": "AES-256-GCM / PBKDF2 configured",
+        "features": {"android_companion": "UNPAIRED", "isolated_remote_preview": "DISABLED"},
     }
 
 

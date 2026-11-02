@@ -3,7 +3,8 @@ Tamper-Evident Audit Ledger (Cryptographic Hash-Chaining).
 
 Provides mathematical proof of event order and immutability:
 - Each event entry includes the SHA-256 hash of the previous entry.
-- Modifying, deleting, or inserting any historic log invalidates the cryptographic chain.
+- Modifying a retained record or deleting an interior record invalidates the chain.
+- Removing a trailing suffix cannot be detected without an externally stored checkpoint.
 - Contains only hashed representations of sensitive details to preserve privacy.
 """
 from datetime import datetime, timezone

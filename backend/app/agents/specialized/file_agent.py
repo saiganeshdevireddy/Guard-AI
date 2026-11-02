@@ -6,9 +6,89 @@ import math
 import os
 import re
 from pathlib import Path
+import subprocess
+import tempfile
 from typing import Any, Dict, List, Optional
 
 from app.agents.base import BaseAgent, event_bus
+from app.config import settings
+
+
+FILE_SIGNATURES = {
+    ".pdf": (b"%PDF-", "PDF document"),
+    ".png": (b"\x89PNG\r\n\x1a\n", "PNG image"),
+    ".jpg": (b"\xff\xd8\xff", "JPEG image"),
+    ".jpeg": (b"\xff\xd8\xff", "JPEG image"),
+    ".gif": ((b"GIF87a", b"GIF89a"), "GIF image"),
+    ".zip": (b"PK\x03\x04", "ZIP archive"),
+    ".gz": (b"\x1f\x8b", "GZIP archive"),
+    ".7z": (b"7z\xbc\xaf\x27\x1c", "7-Zip archive"),
+    ".rar": ((b"Rar!\x1a\x07\x00", b"Rar!\x1a\x07\x01\x00"), "RAR archive"),
+    ".wasm": (b"\x00asm", "WebAssembly module"),
+}
+EXECUTABLE_EXTENSIONS = {".exe", ".dll", ".sys", ".com", ".scr"}
+
+
+def _magic_type(content: bytes) -> tuple[str | None, bool]:
+    if content.startswith(b"MZ"):
+        # The DOS marker alone is common in arbitrary data. Require a bounded
+        # e_lfanew pointer and the PE signature before identifying an executable.
+        if len(content) >= 0x40:
+            pe_offset = int.from_bytes(content[0x3C:0x40], "little")
+            if 0x40 <= pe_offset <= len(content) - 4 and content[pe_offset:pe_offset + 4] == b"PE\x00\x00":
+                return "Windows PE executable", True
+    if content.startswith(b"\x7fELF"):
+        return "ELF executable", True
+    if content.startswith(b"\x00asm"):
+        return "WebAssembly module", True
+    if content.startswith(b"PK\x03\x04"):
+        return "ZIP container (package contents not validated)", False
+    for _ext, (signature, description) in FILE_SIGNATURES.items():
+        signatures = signature if isinstance(signature, tuple) else (signature,)
+        if any(content.startswith(item) for item in signatures):
+            return description, False
+    return None, False
+
+
+def _run_optional_scanners(content: bytes) -> list[dict]:
+    """Run explicitly configured local scanners; never shell-expand input or claim isolation."""
+    commands = []
+    if settings.CLAMSCAN_PATH:
+        commands.append(("ClamAV", [settings.CLAMSCAN_PATH, "--no-summary"]))
+    if settings.YARA_PATH and settings.YARA_RULES_PATH:
+        commands.append(("YARA", [settings.YARA_PATH, settings.YARA_RULES_PATH]))
+    if not commands:
+        return [{"name": "antivirus_yara", "status": "NOT_CONFIGURED"}]
+
+    results = []
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(prefix="guard-ai-inspect-", suffix=".bin", delete=False) as temp_file:
+            temp_path = temp_file.name
+            temp_file.write(content)
+        for name, command in commands:
+            try:
+                completed = subprocess.run(
+                    [*command, temp_path], shell=False, capture_output=True, text=True, timeout=8,
+                    check=False, env={"PATH": os.environ.get("PATH", ""), "SYSTEMROOT": os.environ.get("SYSTEMROOT", "")},
+                )
+                if name == "ClamAV":
+                    status = "MALICIOUS" if completed.returncode == 1 else ("CLEAN" if completed.returncode == 0 else "ERROR")
+                    finding = "Malware signature detected" if status == "MALICIOUS" else None
+                else:
+                    matched = completed.returncode == 0 and bool(completed.stdout.strip())
+                    status = "RULE_MATCH" if matched else ("NO_MATCH" if completed.returncode == 1 else "ERROR")
+                    finding = "Configured YARA rule matched; analyst review is required" if matched else None
+                results.append({"name": name, "status": status, **({"finding": finding} if finding else {})})
+            except (OSError, subprocess.TimeoutExpired):
+                results.append({"name": name, "status": "ERROR"})
+    finally:
+        if temp_path:
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                results.append({"name": "temporary_scan_file_cleanup", "status": "FAILED"})
+    return results
 
 KNOWN_MALICIOUS_HASHES = {
     # Sample real malware signatures (WannaCry, Emotet, Locky reference hashes)
@@ -88,8 +168,30 @@ class FileSecurityAgent(BaseAgent):
     def _on_file_scan_request(self, event):
         filepath = event.payload.get("filepath")
         if filepath and os.path.exists(filepath):
-            with open(filepath, "rb") as f:
-                content = f.read()
+            try:
+                if os.path.getsize(filepath) > settings.MAX_UPLOAD_BYTES:
+                    self.emit_event(
+                        event_type="FILE_ANALYSIS_REJECTED",
+                        payload={"reason": "File exceeds configured static-inspection size limit."},
+                        severity="WARNING",
+                    )
+                    return
+                with open(filepath, "rb") as f:
+                    content = f.read(settings.MAX_UPLOAD_BYTES + 1)
+                if len(content) > settings.MAX_UPLOAD_BYTES:
+                    self.emit_event(
+                        event_type="FILE_ANALYSIS_REJECTED",
+                        payload={"reason": "File exceeded the size limit while being read."},
+                        severity="WARNING",
+                    )
+                    return
+            except OSError:
+                self.emit_event(
+                    event_type="FILE_ANALYSIS_REJECTED",
+                    payload={"reason": "File could not be read for static inspection."},
+                    severity="WARNING",
+                )
+                return
             filename = Path(filepath).name
             result = self.analyze_bytes(content, filename)
             self.emit_event(
@@ -104,6 +206,23 @@ class FileSecurityAgent(BaseAgent):
         """
         self.task_count += 1
         self.heartbeat()
+
+        if not isinstance(content, bytes):
+            return {
+                "filename": str(filename)[:255], "score": 100, "classification": "MALFORMED",
+                "detected_file_type": "Invalid byte input", "file_type_verified": False,
+                "indicators": ["File content must be supplied as bytes"], "matched_rules": [],
+                "optional_scanners": [{"name": "antivirus_yara", "status": "NOT_RUN"}],
+            }
+        if len(content) > settings.MAX_UPLOAD_BYTES:
+            return {
+                "filename": str(filename)[:255], "size_bytes": len(content), "score": 100,
+                "classification": "REJECTED", "detected_file_type": "Not analyzed",
+                "file_type_verified": False,
+                "indicators": ["File exceeds the configured static-inspection size limit"],
+                "matched_rules": [],
+                "optional_scanners": [{"name": "antivirus_yara", "status": "NOT_RUN"}],
+            }
 
         size_bytes = len(content)
         sha256 = hashlib.sha256(content).hexdigest()
@@ -123,16 +242,30 @@ class FileSecurityAgent(BaseAgent):
             indicators.append(f"Known malicious MD5 signature: {KNOWN_MALICIOUS_HASHES[md5]}")
 
         # 2. Magic byte mismatch detection (e.g. .pdf or .png that is actually a Windows PE executable)
-        is_pe = content.startswith(b"MZ")
-        is_elf = content.startswith(b"\x7fELF")
         ext = Path(filename).suffix.lower()
-
-        if is_pe:
-            if ext in [".png", ".jpg", ".pdf", ".txt", ".docx", ".xlsx", ".mp3", ".mp4"]:
-                score += 70
-                indicators.append(f"File Masquerading: Windows PE executable header (MZ) disguised with extension '{ext}'")
-            else:
-                indicators.append("Windows PE executable detected (MZ header)")
+        detected_type, is_executable = _magic_type(content)
+        package_extensions = {".docx", ".xlsx", ".pptx", ".odt", ".ods", ".odp"}
+        expected_extensions = {
+            "Windows PE executable": EXECUTABLE_EXTENSIONS,
+            "ELF executable": {".elf", ".so", ".bin", ""},
+            "WebAssembly module": {".wasm"},
+            "PDF document": {".pdf"}, "PNG image": {".png"}, "JPEG image": {".jpg", ".jpeg"},
+            "GIF image": {".gif"},
+            "ZIP container (package contents not validated)": {".zip"},
+            "GZIP archive": {".gz", ".tgz"}, "7-Zip archive": {".7z"}, "RAR archive": {".rar"},
+        }
+        extension_match = ext in expected_extensions[detected_type] if detected_type in expected_extensions else None
+        if detected_type == "ZIP container (package contents not validated)" and ext in package_extensions:
+            extension_match = None
+            indicators.append("ZIP container detected; office/document package contents were not validated")
+        if extension_match is False:
+            score += 55
+            indicators.append(f"File signature ({detected_type}) conflicts with the .{ext.lstrip('.') or '[no extension]'} filename extension")
+            if is_executable:
+                score += 15
+                indicators.append("Executable content is disguised with a non-executable filename extension")
+        if is_executable:
+            indicators.append(f"Executable signature identified: {detected_type}")
 
         # 3. High entropy evaluation (packed, obfuscated, or encrypted ransomware payload)
         if entropy > 7.3 and size_bytes > 4096:
@@ -148,8 +281,20 @@ class FileSecurityAgent(BaseAgent):
                 matched_rules.append(rule["name"])
                 indicators.append(f"{rule['name']}: {rule['description']}")
 
+        optional_scanners = _run_optional_scanners(content)
+        for scanner in optional_scanners:
+            if scanner["status"] == "MALICIOUS":
+                score += 100
+                indicators.append(f"{scanner['name']} reported a configured malware signature match")
+            elif scanner["status"] == "RULE_MATCH":
+                score += 40
+                indicators.append(f"{scanner['name']} rule matched; manual review is required")
+            elif scanner["status"] == "FAILED":
+                score += 20
+                indicators.append("Temporary scanner input cleanup failed; operator review is required")
+
         final_score = min(score, 100)
-        classification = "CLEAN"
+        classification = "NO_KNOWN_INDICATORS"
         if final_score >= 70:
             classification = "MALICIOUS"
         elif final_score >= 35:
@@ -163,11 +308,16 @@ class FileSecurityAgent(BaseAgent):
             "sha256": sha256,
             "md5": md5,
             "entropy": round(entropy, 2),
-            "is_executable": is_pe or is_elf,
+            "is_executable": is_executable,
+            "detected_file_type": detected_type or "Unknown / unsupported format",
+            "file_type_verified": extension_match is True,
+            "file_type_status": "VERIFIED_MATCH" if extension_match is True else ("SIGNATURE_MISMATCH" if extension_match is False else "UNVERIFIED"),
+            "optional_scanners": optional_scanners,
             "score": final_score,
             "classification": classification,
             "matched_rules": matched_rules,
             "indicators": indicators if indicators else ["No known malicious patterns or abnormal entropy detected"],
+            "verdict_scope": "Static heuristics and configured local scanners only; no file execution or dynamic sandboxing was performed.",
         }
         self.metrics["last_scan"] = result
         return result

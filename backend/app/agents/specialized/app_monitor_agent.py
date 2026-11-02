@@ -6,7 +6,7 @@ path masquerading (e.g. svchost running outside System32), and resource spikes.
 Maintains clear boundaries regarding OS permissions without claiming omniscient monitoring.
 """
 from typing import Any, Dict, List, Optional
-from app.agents.base import BaseAgent, event_bus
+from app.agents.base import AgentStatus, BaseAgent, event_bus
 
 CRITICAL_SYSTEM_BINARIES = {
     "svchost.exe": "c:\\windows\\system32",
@@ -34,8 +34,9 @@ class ApplicationBehaviourAgent(BaseAgent):
         super().__init__(
             agent_id="agent_app_monitor",
             name="Application Behaviour Monitoring Agent",
-            role="Inspects process hierarchies, masquerading binaries, and anomalous execution behavior"
+            role="Analyzes process metadata submitted by a caller; does not monitor Windows processes"
         )
+        self.status = AgentStatus.IDLE
 
     def _register_event_handlers(self):
         event_bus.subscribe("ANALYZE_PROCESS_TELEMETRY", self._on_telemetry_request)
