@@ -15,7 +15,7 @@ console.log("[Guard AI] content script active");
     }
   }
 
-  function showDecision({ title, message, english, telugu, color, buttons }) {
+  function showDecision({ title, message, english, telugu, url, color, buttons }) {
     document.getElementById("guard-ai-link-overlay")?.remove();
     const host = document.createElement("div");
     host.id = "guard-ai-link-overlay";
@@ -43,6 +43,12 @@ console.log("[Guard AI] content script active");
       paragraph.textContent = text;
       paragraph.style.cssText = "max-width:760px;margin:8px 0";
       panel.append(paragraph);
+    }
+    if (url) {
+      const blockedUrl = document.createElement("p");
+      blockedUrl.textContent = url;
+      blockedUrl.style.cssText = "max-width:760px;margin:8px 0;font:12px/1.4 ui-monospace,monospace;overflow-wrap:anywhere";
+      panel.append(blockedUrl);
     }
 
     const controls = document.createElement("div");
@@ -73,9 +79,12 @@ console.log("[Guard AI] content script active");
 
     // Stop page handlers and native navigation before contacting the service worker.
     event.preventDefault();
+    console.log("[Guard AI] click intercepted", url);
     event.stopImmediatePropagation();
 
     chrome.runtime.sendMessage({ type: "GUARD_CHECK_LINK", url }, (result) => {
+      console.log("[Guard AI] decision", result?.action);
+      if (chrome.runtime.lastError) console.error("[Guard AI] runtime error", chrome.runtime.lastError);
       if (chrome.runtime.lastError || !result?.ok) {
         showDecision({
           title: "Guard AI",
@@ -99,6 +108,7 @@ console.log("[Guard AI] content script active");
           title: "Dangerous link blocked",
           english,
           telugu,
+          url,
           color: "#b91c1c",
           buttons: [{ label: "Go back", onClick: () => {} }]
         });
