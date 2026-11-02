@@ -3,7 +3,7 @@
   "name": "Guard AI Link Protection",
   "version": "1.0.0",
   "description": "Checks clicked links with the local Guard AI pipeline.",
-  "permissions": [],
+  "permissions": ["webNavigation", "tabs"],
   "host_permissions": [
     "http://127.0.0.1:8000/*",
     "http://*/*",
@@ -17,6 +17,12 @@
       "matches": ["http://*/*", "https://*/*", "file:///*"],
       "js": ["content.js"],
       "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["block.html"],
+      "matches": ["<all_urls>"]
     }
   ]
 }
