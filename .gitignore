@@ -28,3 +28,9 @@ data/sandbox/*
 # OS generated
 .DS_Store
 Thumbs.db
+
+server.log
+.env
+.venv
+*.db
+backend/data/

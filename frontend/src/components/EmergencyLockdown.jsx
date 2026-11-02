@@ -5,7 +5,6 @@ import { AlertIcon, ShieldIcon, CheckIcon } from './Icons';
 export function EmergencyLockdown({ onStatusChanged }) {
   const [status, setStatus] = useState(null);
   const [quarantine, setQuarantine] = useState([]);
-  const [humanConfirmed, setHumanConfirmed] = useState(false);
   const [simResult, setSimResult] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -26,14 +25,14 @@ export function EmergencyLockdown({ onStatusChanged }) {
   };
 
   const handleActivate = async (level) => {
-    if (!humanConfirmed) {
-      setError('Check the operator approval box before activating incident mode.');
-      return;
-    }
+    const reason = 'Operator triggered containment';
+    const target = null;
+    if (!window.confirm(`Request server-verified approval to activate ${level} defensive incident mode? This records Guard AI state only; it does not isolate the operating system or network.`)) return;
     setLoading(true);
     setError(null);
     try {
-      await api.activateLockdown(level, 'Operator triggered containment', humanConfirmed);
+      const approvalId = await api.requestActionApproval('EMERGENCY_ACTIVATE', target, { level, reason, target });
+      await api.activateLockdown(level, reason, target, approvalId);
       await loadStatus();
       if (onStatusChanged) onStatusChanged();
     } catch (err) {
@@ -44,10 +43,12 @@ export function EmergencyLockdown({ onStatusChanged }) {
   };
 
   const handleReset = async () => {
+    if (!window.confirm('Request server-verified approval to reset defensive incident mode?')) return;
     setLoading(true);
     setError(null);
     try {
-      await api.resetLockdown(true);
+      const approvalId = await api.requestActionApproval('EMERGENCY_RESET', null, {});
+      await api.resetLockdown(approvalId);
       await loadStatus();
       if (onStatusChanged) onStatusChanged();
     } catch (err) {
@@ -58,8 +59,12 @@ export function EmergencyLockdown({ onStatusChanged }) {
   };
 
   const handleSimulate = async (actionType, target) => {
+    if (!window.confirm(`Request approval for the simulated ${actionType} action on “${target}”? No process or network configuration will be changed.`)) return;
     try {
-      const res = await api.simulateContainment(actionType, target);
+      const permission = actionType === 'PROCESS_TERMINATION' ? 'PROCESS_TERMINATE' : 'NETWORK_ISOLATE';
+      const payload = { action_type: actionType, target };
+      const approvalId = await api.requestActionApproval(permission, target, payload);
+      const res = await api.simulateContainment(actionType, target, approvalId);
       setSimResult(res);
     } catch (err) {
       setError(err.message);
@@ -102,7 +107,7 @@ export function EmergencyLockdown({ onStatusChanged }) {
         </div>
       )}
 
-      {/* Human Approval Safeguard Checkbox */}
+      {/* Human confirmation starts an authenticated, server-side approval flow; no client Boolean authorizes the action. */}
       <div style={{
         background: 'var(--surface-subtle)',
         padding: '14px 18px',
@@ -113,20 +118,12 @@ export function EmergencyLockdown({ onStatusChanged }) {
         alignItems: 'center',
         justifyContent: 'space-between',
       }}>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', color: 'var(--text-main)', cursor: 'pointer' }}>
-          <input
-            type="checkbox"
-            checked={humanConfirmed}
-            onChange={(e) => setHumanConfirmed(e.target.checked)}
-            style={{ width: '16px', height: '16px', accentColor: 'var(--crimson-danger)' }}
-          />
-          <span>I authorize Offence AI to enforce high-impact containment (Human Confirmation Gating)</span>
-        </label>
+        <span style={{ fontSize: '13px', color: 'var(--text-muted)' }}>High-impact actions require authenticated, server-verified, single-use approval.</span>
         <button
           onClick={() => handleActivate('FULL_CONTAINMENT')}
-          disabled={!humanConfirmed || loading}
+          disabled={loading}
           className="btn btn-danger"
-          style={{ opacity: humanConfirmed ? 1 : 0.5, fontSize: '12px' }}
+          style={{ fontSize: '12px' }}
         >
           Full System Containment
         </button>

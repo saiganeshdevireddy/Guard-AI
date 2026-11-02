@@ -100,6 +100,35 @@ test('network failures are surfaced as API errors', async () => {
   await assert.rejects(client.getHealth(), (error) => error.code === 'network');
 });
 
+test('high-impact action flow obtains and approves a server approval before execution', async () => {
+  const calls = [];
+  const client = createApiClient({ mode: 'development', fetchImpl: async (url, options) => {
+    calls.push({ url, options });
+    if (url.endsWith('/approvals')) return jsonResponse({ approval_id: 'server-generated-id' });
+    if (url.endsWith('/approvals/approve')) return jsonResponse({ status: 'APPROVED' });
+    return jsonResponse({ success: true });
+  } });
+  client.setAccessToken('authenticated-user-token');
+
+  const payload = { level: 'HEIGHTENED', reason: 'Operator triggered containment', target: null };
+  const approvalId = await client.requestActionApproval('EMERGENCY_ACTIVATE', null, payload);
+  await client.activateLockdown('HEIGHTENED', payload.reason, null, approvalId);
+
+  assert.deepEqual(calls.map((call) => call.url), [
+    '/api/v1/emergency/approvals',
+    '/api/v1/emergency/approvals/approve',
+    '/api/v1/emergency/activate',
+  ]);
+  assert.deepEqual(JSON.parse(calls[0].options.body), {
+    action: 'EMERGENCY_ACTIVATE', target: null, payload,
+  });
+  assert.deepEqual(JSON.parse(calls[1].options.body), { approval_id: 'server-generated-id' });
+  const actionBody = JSON.parse(calls[2].options.body);
+  assert.equal(actionBody.approval_id, 'server-generated-id');
+  assert.equal(Object.hasOwn(actionBody, 'human_confirmed'), false);
+  assert.ok(calls.every((call) => call.options.headers.get('Authorization') === 'Bearer authenticated-user-token'));
+});
+
 test('requests abort at the configured timeout', async () => {
   const client = createApiClient({
     mode: 'development',

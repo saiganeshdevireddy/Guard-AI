@@ -47,7 +47,7 @@ The plan now includes per-phase input/output and fail-closed contracts, required
 
 | Phase | Audit result and required gate |
 | --- | --- |
-| **A. Worker infrastructure and health** | Prerequisites are not met. Host/owner/budget/region and network ownership must be approved. Define fresh liveness vs readiness, exact policy/route checks, negative readiness tests and operational ownership before declaring complete. No browser session yet. |
+| **A. Worker infrastructure and health** | Prerequisites are not met. Host/owner/budget/region and network ownership must be approved. Define fresh liveness vs readiness, exact policy/route checks, negative readiness tests and operational ownership before declaring complete. A metadata-only authenticated browser-session API exists; browser/runtime sessions remain unavailable. Current milestone evidence is in [MILESTONE_5_ACCEPTANCE_FRAMEWORK.md](MILESTONE_5_ACCEPTANCE_FRAMEWORK.md). |
 | **B. Secure worker communication** | Depends on A. Add explicit authorization beyond mTLS, owner/session scope, resource ceilings, replay/idempotency, rotation/revocation, deadlines and failure behavior. |
 | **C. Session manager** | Depends on B and decisions on persistent store, user identity, retention, consent and quotas. Current SQLite/in-process event bus are not a distributed session service. Define canonical transitions and owner checks; no raw URLs in existing threat storage. |
 | **D. Disposable browser runtime** | Depends on A–C. Verify signed image and per-session encrypted overlay/key; apply network restrictions before boot/navigation; define browser/profile ephemeral policy and cleanup/remanence evidence. |

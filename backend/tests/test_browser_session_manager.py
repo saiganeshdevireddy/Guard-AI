@@ -10,6 +10,7 @@ from app.services.browser_session_manager import (
     InvalidSessionTransition,
     PolicyDecision,
     SessionState,
+    TerminationReceipt,
     WorkerHealth,
     WorkerRegistration,
     transition_session,
@@ -165,11 +166,18 @@ def test_authorized_transition_requires_positive_policy_decision():
     assert authorized.state is SessionState.AUTHORIZED
     assert authorized.owner_id == "alice"
     assert authorized.worker_id == "worker-a"
-
     with pytest.raises(InvalidSessionTransition):
         transition_session(session, SessionState.AUTHORIZED, decision=denied)
     with pytest.raises(InvalidSessionTransition):
         transition_session(session, SessionState.AUTHORIZED)
+
+
+def test_authorized_session_can_be_cancelled_and_cancellation_is_terminal():
+    authorized = BrowserSession("session-a", "alice", SessionState.AUTHORIZED, "worker-a", "policy-v1")
+    cancelled = transition_session(authorized, SessionState.CANCELLED)
+    assert cancelled.state is SessionState.CANCELLED
+    with pytest.raises(InvalidSessionTransition):
+        transition_session(cancelled, SessionState.AUTHORIZED)
 
 
 def test_denial_is_terminal_and_requires_negative_policy_decision():
@@ -209,7 +217,11 @@ def test_cleanup_pending_cannot_be_closed_without_matching_verified_receipt():
 
 def test_cleanup_receipt_cannot_close_session_without_verifier():
     cleanup_pending = BrowserSession("session-a", "alice", SessionState.CLEANUP_PENDING, "worker-a")
-    receipt = CleanupReceipt("session-a", "worker-a", True, datetime.now(timezone.utc))
+    receipt = CleanupReceipt(
+        "session-a", "worker-a", True, datetime.now(timezone.utc),
+        runtime_terminated=True, temporary_storage_removed=True,
+        session_data_removed=True, credentials_disposed=True, temporary_artifacts_removed=True,
+    )
     with pytest.raises(InvalidSessionTransition, match="verified cleanup evidence"):
         transition_session(cleanup_pending, SessionState.CLOSED, cleanup_receipt=receipt)
 
@@ -220,7 +232,11 @@ def test_cleanup_verifier_failure_keeps_session_unclosed():
             return False
 
     cleanup_pending = BrowserSession("session-a", "alice", SessionState.CLEANUP_PENDING, "worker-a")
-    receipt = CleanupReceipt("session-a", "worker-a", True, datetime.now(timezone.utc))
+    receipt = CleanupReceipt(
+        "session-a", "worker-a", True, datetime.now(timezone.utc),
+        runtime_terminated=True, temporary_storage_removed=True,
+        session_data_removed=True, credentials_disposed=True, temporary_artifacts_removed=True,
+    )
     with pytest.raises(InvalidSessionTransition, match="could not be verified"):
         transition_session(
             cleanup_pending,
@@ -237,6 +253,32 @@ def test_cleanup_failure_can_be_quarantined_and_retried():
     assert quarantined.state is SessionState.QUARANTINED
     retried = transition_session(quarantined, SessionState.CLEANUP_PENDING)
     assert retried.state is SessionState.CLEANUP_PENDING
+
+
+def test_runtime_termination_state_requires_bound_independent_evidence(now):
+    pending = BrowserSession("session-a", "alice", SessionState.TERMINATION_PENDING, "worker-a")
+    with pytest.raises(InvalidSessionTransition, match="verified worker evidence"):
+        transition_session(pending, SessionState.TERMINATED)
+
+    class AcceptingVerifier:
+        def verify_termination_receipt(self, receipt, session):
+            return receipt.operation_id == "op-1" and session.session_id == receipt.session_id
+
+    receipt = TerminationReceipt("session-a", "worker-a", "op-1", True, now)
+    terminated = transition_session(
+        pending,
+        SessionState.TERMINATED,
+        termination_receipt=receipt,
+        termination_verifier=AcceptingVerifier(),
+    )
+    assert terminated.state is SessionState.TERMINATED
+
+
+def test_cleanup_verified_state_requires_separate_cleanup_verification(now):
+    pending = BrowserSession("session-a", "alice", SessionState.CLEANUP_PENDING, "worker-a")
+    receipt = CleanupReceipt("session-a", "worker-a", True, now)
+    with pytest.raises(InvalidSessionTransition, match="verified cleanup evidence"):
+        transition_session(pending, SessionState.CLEANUP_VERIFIED, cleanup_receipt=receipt)
 
 
 def test_unknown_worker_health_cannot_authorize_transition():

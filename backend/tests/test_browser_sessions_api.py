@@ -7,7 +7,16 @@ from unittest.mock import Mock
 import pytest
 from starlette.testclient import TestClient
 
-from app.database import BrowserSessionRecord, SessionLocal, init_db
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.core.audit_chain import AuditChainService
+from app.database import (
+    AuditEntry,
+    BrowserSessionRecord,
+    SessionLocal,
+    WorkerAuthorizationTicketRecord,
+    init_db,
+)
 from app.agents.controller import controller_ai
 from app.main import app
 from app.routers.browser_sessions_api import (
@@ -116,6 +125,104 @@ def test_session_ownership_is_derived_from_authenticated_principal(test_auth_use
     response = _client(test_auth_users["admin_username"]).get(f"/api/v1/sandbox/sessions/{session_id}")
     assert response.status_code == 404
     assert response.json()["detail"]["code"] == "session_not_found"
+
+
+def test_session_cancellation_requires_authentication():
+    response = TestClient(app).delete("/api/v1/sandbox/sessions/abcdefghijklmnopqrstuvwxyz")
+    assert response.status_code == 401
+
+
+def test_only_session_owner_can_cancel_authorization(test_auth_users):
+    session_id = _seed_session("someone-else", "AUTHORIZED", "test-worker")
+    response = _client(test_auth_users["admin_username"]).delete(
+        f"/api/v1/sandbox/sessions/{session_id}"
+    )
+    assert response.status_code == 404
+    assert response.json()["detail"]["code"] == "session_not_found"
+
+
+def _seed_ticket(session_id: str, owner_id: str, worker_id: str = "test-worker") -> str:
+    ticket_id = secrets.token_urlsafe(24)
+    db = SessionLocal()
+    try:
+        db.add(WorkerAuthorizationTicketRecord(
+            ticket_id=ticket_id,
+            jti_hash=hashlib.sha256(ticket_id.encode("ascii")).hexdigest(),
+            delivery_id_hash=hashlib.sha256(secrets.token_bytes(32)).hexdigest(),
+            key_id="test-key",
+            session_id=session_id,
+            worker_id=worker_id,
+            subject_id=owner_id,
+            expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        ))
+        db.commit()
+    finally:
+        db.close()
+    return ticket_id
+
+
+def test_cancelling_authorized_session_revokes_worker_tickets_and_is_idempotent(test_auth_users):
+    owner = test_auth_users["admin_username"]
+    session_id = _seed_session(owner, "AUTHORIZED", "test-worker")
+    ticket_id = _seed_ticket(session_id, owner)
+    client = _client(owner)
+
+    first = client.delete(f"/api/v1/sandbox/sessions/{session_id}")
+    second = client.delete(f"/api/v1/sandbox/sessions/{session_id}")
+
+    assert first.status_code == second.status_code == 200
+    assert first.json()["state"] == second.json()["state"] == "CANCELLED"
+    assert first.json()["runtime_started"] is False
+    db = SessionLocal()
+    try:
+        session = db.query(BrowserSessionRecord).filter_by(session_id=session_id).one()
+        ticket = db.query(WorkerAuthorizationTicketRecord).filter_by(ticket_id=ticket_id).one()
+        event = db.query(AuditEntry).filter_by(
+            event_type="BROWSER_SESSION_AUTHORIZATION_CANCELLED",
+            actor=owner,
+        ).one()
+        assert session.state == "CANCELLED"
+        assert ticket.revoked_at is not None
+        assert event is not None
+    finally:
+        db.close()
+
+    cannot_provision = client.post(f"/api/v1/sandbox/sessions/{session_id}/provision")
+    assert cannot_provision.status_code == 409
+
+
+def test_cancellation_rejects_non_authorized_lifecycle_states(test_auth_users):
+    session_id = _seed_session(test_auth_users["admin_username"], "PROVISIONING", "test-worker")
+    response = _client(test_auth_users["admin_username"]).delete(
+        f"/api/v1/sandbox/sessions/{session_id}"
+    )
+    assert response.status_code == 409
+    assert response.json()["detail"]["code"] == "invalid_session_transition"
+
+
+def test_audit_failure_rolls_back_session_cancellation_and_ticket_revocation(
+    test_auth_users, monkeypatch
+):
+    owner = test_auth_users["admin_username"]
+    session_id = _seed_session(owner, "AUTHORIZED", "test-worker")
+    ticket_id = _seed_ticket(session_id, owner)
+
+    def fail_audit(*args, **kwargs):
+        raise SQLAlchemyError("simulated audit database failure")
+
+    monkeypatch.setattr(AuditChainService, "record_event", staticmethod(fail_audit))
+    response = _client(owner).delete(f"/api/v1/sandbox/sessions/{session_id}")
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "session_store_unavailable"
+
+    db = SessionLocal()
+    try:
+        session = db.query(BrowserSessionRecord).filter_by(session_id=session_id).one()
+        ticket = db.query(WorkerAuthorizationTicketRecord).filter_by(ticket_id=ticket_id).one()
+        assert session.state == "AUTHORIZED"
+        assert ticket.revoked_at is None
+    finally:
+        db.close()
 
 
 def test_defence_policy_defaults_to_deny(test_auth_users):

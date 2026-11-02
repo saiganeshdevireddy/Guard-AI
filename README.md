@@ -57,7 +57,7 @@ Push-Location backend
 Pop-Location
 ```
 
-The repository currently defines 39 backend pytest tests and 19 frontend Node.js test cases. These are source-based counts, not a claim that the tests passed in this checkout. Run the frontend tests with `npm test` from `frontend`.
+The latest recorded full backend run passed 134 tests; see the [Milestone 5 acceptance framework](docs/MILESTONE_5_ACCEPTANCE_FRAMEWORK.md) for the command, date, scope, and limitations. This is a point-in-time application test result, not a production-security claim. Frontend tests were not run in that backend verification; run them with `npm test` from `frontend`.
 
 ## Configuration
 

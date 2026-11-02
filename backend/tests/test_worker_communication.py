@@ -20,6 +20,7 @@ from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding as asymmetric_padding, rsa
 from cryptography.x509.oid import ExtendedKeyUsageOID, NameOID
+from sqlalchemy import event
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 from starlette.testclient import TestClient
@@ -32,6 +33,7 @@ from app.database import (
     WorkerHealthRecord,
     WorkerIdentityRecord,
     WorkerSigningKeyState,
+    engine,
     get_db,
     init_db,
 )
@@ -46,6 +48,7 @@ from app.services.worker_communication import (
     certificate_fingerprint,
 )
 from app.services.browser_session_manager import BrowserPrincipal, BrowserSessionPolicy, WorkerHealth
+from app.services.worker_supervisor import WorkerCommandAcknowledgement
 from app.core.audit_chain import AuditChainService
 
 init_db()
@@ -597,6 +600,199 @@ def test_ticket_redeem_rechecks_persisted_session_authorization():
         db.close()
 
 
+def test_cancelled_session_cannot_receive_or_redeem_worker_ticket():
+    _, _, leaf_key, ca_pem, leaf_pem, crl_pem = _make_certificates()
+    service = _service(ca_pem, crl_pem)
+    worker = _register_with_healthy_evidence(service, leaf_pem, leaf_key)
+    issue_session = _seed_session(worker.worker_id)
+    redeem_session = _seed_session(worker.worker_id)
+    db = SessionLocal()
+    try:
+        _, ticket, _ = service.issue_session_ticket(
+            db, session_id=redeem_session, subject_id="pytest-admin", worker_id=worker.worker_id,
+            delivery_id="cancelled-session-redeem-01",
+        )
+    finally:
+        db.close()
+
+    client = TestClient(app, headers={
+        "Authorization": f"Bearer {issue_access_token('pytest-admin')}"
+    })
+    cancelled = client.delete(f"/api/v1/sandbox/sessions/{redeem_session}")
+    assert cancelled.status_code == 200
+    assert cancelled.json()["state"] == "CANCELLED"
+    assert client.delete(f"/api/v1/sandbox/sessions/{issue_session}").status_code == 200
+
+    db = SessionLocal()
+    try:
+        with pytest.raises(WorkerSecurityError, match="authorization"):
+            service.issue_session_ticket(
+                db, session_id=issue_session, subject_id="pytest-admin", worker_id=worker.worker_id,
+                delivery_id="cancelled-session-issue-01",
+            )
+        with pytest.raises(WorkerSecurityError, match="authorization"):
+            service.redeem_session_ticket(
+                db, token=ticket, peer_worker_id=worker.worker_id, expected_session_id=redeem_session
+            )
+        stored = db.query(WorkerAuthorizationTicketRecord).filter_by(session_id=redeem_session).one()
+        assert stored.redeemed_at is None
+    finally:
+        db.close()
+
+
+def test_issue_first_then_concurrent_cancellation_revokes_ticket_atomically():
+    _, _, leaf_key, ca_pem, leaf_pem, crl_pem = _make_certificates()
+    service = _service(ca_pem, crl_pem)
+    worker = _register_with_healthy_evidence(service, leaf_pem, leaf_key)
+    session_id = _seed_session(worker.worker_id)
+    ticket_inserted = threading.Event()
+    cancellation_update_started = threading.Event()
+    release_issue = threading.Event()
+
+    def pause_after_ticket_insert(_connection, _cursor, statement, _params, _context, _many):
+        if "INSERT INTO WORKER_AUTHORIZATION_TICKETS" in " ".join(statement.upper().split()):
+            ticket_inserted.set()
+            if not release_issue.wait(timeout=5):
+                raise AssertionError("test did not release ticket issuance")
+
+    def observe_cancel_update(_connection, _cursor, statement, _params, _context, _many):
+        normalized = " ".join(statement.upper().split())
+        if normalized.startswith("UPDATE BROWSER_SESSIONS"):
+            cancellation_update_started.set()
+
+    event.listen(engine, "after_cursor_execute", pause_after_ticket_insert)
+    event.listen(engine, "before_cursor_execute", observe_cancel_update)
+
+    def issue_ticket():
+        db = SessionLocal()
+        try:
+            return service.issue_session_ticket(
+                db, session_id=session_id, subject_id="pytest-admin", worker_id=worker.worker_id,
+                delivery_id="issue-cancel-race-ticket-0001",
+            )
+        finally:
+            db.close()
+
+    def cancel_session():
+        client = TestClient(app, headers={
+            "Authorization": f"Bearer {issue_access_token('pytest-admin')}"
+        })
+        return client.delete(f"/api/v1/sandbox/sessions/{session_id}")
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            issue_future = pool.submit(issue_ticket)
+            assert ticket_inserted.wait(timeout=5)
+            cancel_future = pool.submit(cancel_session)
+            assert cancellation_update_started.wait(timeout=5)
+
+            # The ticket INSERT is uncommitted and owns SQLite's write reservation.
+            # A separate reader must see the consistent pre-issue state.
+            probe = SessionLocal()
+            try:
+                assert probe.query(BrowserSessionRecord).filter_by(session_id=session_id).one().state == "AUTHORIZED"
+                assert probe.query(WorkerAuthorizationTicketRecord).filter_by(session_id=session_id).count() == 0
+            finally:
+                probe.close()
+
+            release_issue.set()
+            _ticket_id, ticket, _expires = issue_future.result(timeout=5)
+            cancelled = cancel_future.result(timeout=5)
+    finally:
+        release_issue.set()
+        event.remove(engine, "after_cursor_execute", pause_after_ticket_insert)
+        event.remove(engine, "before_cursor_execute", observe_cancel_update)
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["state"] == "CANCELLED"
+    db = SessionLocal()
+    try:
+        session = db.query(BrowserSessionRecord).filter_by(session_id=session_id).one()
+        row = db.query(WorkerAuthorizationTicketRecord).filter_by(session_id=session_id).one()
+        assert session.state == "CANCELLED"
+        assert row.revoked_at is not None
+        assert row.redeemed_at is None
+        with pytest.raises(WorkerSecurityError):
+            service.redeem_session_ticket(
+                db, token=ticket, peer_worker_id=worker.worker_id, expected_session_id=session_id
+            )
+    finally:
+        db.close()
+
+
+def test_cancel_first_blocks_concurrent_ticket_issue_until_cancel_commits(monkeypatch):
+    _, _, leaf_key, ca_pem, leaf_pem, crl_pem = _make_certificates()
+    service = _service(ca_pem, crl_pem)
+    worker = _register_with_healthy_evidence(service, leaf_pem, leaf_key)
+    session_id = _seed_session(worker.worker_id)
+    cancellation_writes_ready = threading.Event()
+    issue_begin_attempted = threading.Event()
+    release_cancel = threading.Event()
+    original_record_event = AuditChainService.record_event
+
+    def pause_cancellation_audit(db, actor, event_type, payload):
+        if event_type == "BROWSER_SESSION_AUTHORIZATION_CANCELLED":
+            cancellation_writes_ready.set()
+            if not release_cancel.wait(timeout=5):
+                raise AssertionError("test did not release cancellation transaction")
+        return original_record_event(db, actor, event_type, payload)
+
+    def observe_immediate_begin(_connection, _cursor, statement, _params, _context, _many):
+        if "BEGIN IMMEDIATE" in statement.upper():
+            issue_begin_attempted.set()
+
+    monkeypatch.setattr(AuditChainService, "record_event", staticmethod(pause_cancellation_audit))
+    event.listen(engine, "before_cursor_execute", observe_immediate_begin)
+
+    def cancel_session():
+        client = TestClient(app, headers={
+            "Authorization": f"Bearer {issue_access_token('pytest-admin')}"
+        })
+        return client.delete(f"/api/v1/sandbox/sessions/{session_id}")
+
+    def issue_ticket():
+        db = SessionLocal()
+        try:
+            return service.issue_session_ticket(
+                db, session_id=session_id, subject_id="pytest-admin", worker_id=worker.worker_id,
+                delivery_id="cancel-issue-race-ticket-0001",
+            )
+        finally:
+            db.close()
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cancel_future = pool.submit(cancel_session)
+            assert cancellation_writes_ready.wait(timeout=5)
+
+            # While the cancellation write is uncommitted, other connections see
+            # the prior, internally consistent state, not a partial transition.
+            probe = SessionLocal()
+            try:
+                assert probe.query(BrowserSessionRecord).filter_by(session_id=session_id).one().state == "AUTHORIZED"
+                assert probe.query(WorkerAuthorizationTicketRecord).filter_by(session_id=session_id).count() == 0
+            finally:
+                probe.close()
+
+            issue_future = pool.submit(issue_ticket)
+            assert issue_begin_attempted.wait(timeout=5)
+            release_cancel.set()
+            cancelled = cancel_future.result(timeout=5)
+            with pytest.raises(WorkerSecurityError, match="authorization"):
+                issue_future.result(timeout=5)
+    finally:
+        release_cancel.set()
+        event.remove(engine, "before_cursor_execute", observe_immediate_begin)
+
+    assert cancelled.status_code == 200
+    assert cancelled.json()["state"] == "CANCELLED"
+    db = SessionLocal()
+    try:
+        assert db.query(BrowserSessionRecord).filter_by(session_id=session_id).one().state == "CANCELLED"
+        assert db.query(WorkerAuthorizationTicketRecord).filter_by(session_id=session_id).count() == 0
+    finally:
+        db.close()
+
 def test_worker_becoming_unhealthy_after_session_authorization_cannot_redeem_ticket():
     _, _, leaf_key, ca_pem, leaf_pem, crl_pem = _make_certificates()
     service = _service(ca_pem, crl_pem)
@@ -769,6 +965,97 @@ def test_database_failure_during_ticket_reauthorization_fails_closed():
             )
     finally:
         db.rollback()
+        db.close()
+
+
+def test_database_failure_during_redemption_reauthorization_is_controlled_and_uncommitted():
+    _, _, leaf_key, ca_pem, leaf_pem, crl_pem = _make_certificates()
+    service = _service(ca_pem, crl_pem)
+    worker = _register_with_healthy_evidence(service, leaf_pem, leaf_key)
+    session_id = _seed_session(worker.worker_id)
+    db = SessionLocal()
+    try:
+        _, ticket, _ = service.issue_session_ticket(
+            db, session_id=session_id, subject_id="pytest-admin", worker_id=worker.worker_id,
+            delivery_id="redeem-health-db-failure-01",
+        )
+    finally:
+        db.close()
+
+    class FailingHealthQuerySession(Session):
+        def query(self, *entities, **kwargs):
+            if entities and entities[0] is WorkerHealthRecord:
+                raise SQLAlchemyError("simulated health database outage during redemption")
+            return super().query(*entities, **kwargs)
+
+    failing_db = FailingHealthQuerySession(bind=SessionLocal.kw["bind"], autocommit=False, autoflush=False)
+    try:
+        with pytest.raises(WorkerSecurityError, match="authorization storage"):
+            service.redeem_session_ticket(
+                failing_db, token=ticket, peer_worker_id=worker.worker_id,
+                expected_session_id=session_id,
+            )
+    finally:
+        failing_db.rollback()
+        failing_db.close()
+
+    db = SessionLocal()
+    try:
+        row = db.query(WorkerAuthorizationTicketRecord).filter_by(session_id=session_id).one()
+        session = db.query(BrowserSessionRecord).filter_by(session_id=session_id).one()
+        assert row.redeemed_at is None
+        assert row.revoked_at is None
+        assert session.state == "AUTHORIZED"
+    finally:
+        db.close()
+
+
+def test_redemption_audit_failure_rolls_back_update_and_retry_remains_one_time(monkeypatch):
+    _, _, leaf_key, ca_pem, leaf_pem, crl_pem = _make_certificates()
+    service = _service(ca_pem, crl_pem)
+    worker = _register_with_healthy_evidence(service, leaf_pem, leaf_key)
+    session_id = _seed_session(worker.worker_id)
+    db = SessionLocal()
+    try:
+        _, ticket, _ = service.issue_session_ticket(
+            db, session_id=session_id, subject_id="pytest-admin", worker_id=worker.worker_id,
+            delivery_id="redeem-audit-failure-0001",
+        )
+    finally:
+        db.close()
+
+    original_record_event = AuditChainService.record_event
+
+    def fail_redemption_audit(db, actor, event_type, payload):
+        if event_type == "WORKER_AUTHORIZATION_TICKET_REDEEMED":
+            raise SQLAlchemyError("simulated redemption audit outage")
+        return original_record_event(db, actor, event_type, payload)
+
+    db = SessionLocal()
+    try:
+        with monkeypatch.context() as patch:
+            patch.setattr(AuditChainService, "record_event", staticmethod(fail_redemption_audit))
+            with pytest.raises(WorkerSecurityError, match="audit is unavailable"):
+                service.redeem_session_ticket(
+                    db, token=ticket, peer_worker_id=worker.worker_id,
+                    expected_session_id=session_id,
+                )
+        row = db.query(WorkerAuthorizationTicketRecord).filter_by(session_id=session_id).one()
+        assert row.redeemed_at is None
+        assert db.query(BrowserSessionRecord).filter_by(session_id=session_id).one().state == "AUTHORIZED"
+
+        accepted = service.redeem_session_ticket(
+            db, token=ticket, peer_worker_id=worker.worker_id, expected_session_id=session_id
+        )
+        assert accepted["session_id"] == session_id
+        with pytest.raises(WorkerSecurityError, match="already used"):
+            service.redeem_session_ticket(
+                db, token=ticket, peer_worker_id=worker.worker_id,
+                expected_session_id=session_id,
+            )
+        row = db.query(WorkerAuthorizationTicketRecord).filter_by(session_id=session_id).one()
+        assert row.redeemed_at is not None
+    finally:
         db.close()
 
 
@@ -1207,3 +1494,31 @@ def test_mtls_ticket_delivery_is_retry_safe_and_replay_rejected(monkeypatch):
         assert first["ticket"] not in json.dumps(replay_body)
     finally:
         server.close()
+
+
+def test_enrolled_worker_certificate_verifies_signed_supervisor_messages():
+    _, _, worker_key, ca_pem, worker_cert_pem, crl_pem = _make_certificates()
+    service = _service(ca_pem, crl_pem)
+    worker = _register(service, worker_cert_pem)
+    observed_at = datetime.now(timezone.utc)
+    message = WorkerCommandAcknowledgement(
+        "operation-123", "session-123", worker.worker_id, True, observed_at
+    )
+    signature = worker_key.sign(message.signed_bytes(), asymmetric_padding.PKCS1v15(), hashes.SHA256())
+    message = WorkerCommandAcknowledgement(
+        message.command_id, message.session_id, message.worker_id, message.accepted,
+        message.observed_at, base64.urlsafe_b64encode(signature).decode("ascii").rstrip("="),
+    )
+    db = SessionLocal()
+    try:
+        assert service.verify_worker_signed_message(
+            db, worker_id=worker.worker_id, message=message.signed_bytes(),
+            signature_b64url=message.signature_b64url,
+        ) is True
+        with pytest.raises(WorkerSecurityError, match="signature is invalid"):
+            service.verify_worker_signed_message(
+                db, worker_id=worker.worker_id, message=b"tampered message",
+                signature_b64url=message.signature_b64url,
+            )
+    finally:
+        db.close()

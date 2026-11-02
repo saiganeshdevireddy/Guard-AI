@@ -16,9 +16,9 @@ The architecture references are [ISOLATED_BROWSER_ARCHITECTURE.md](ISOLATED_BROW
 
 ### Verified repository state
 
-The current application is a Windows-oriented React/Vite frontend and FastAPI backend. The backend defaults to `127.0.0.1`; the frontend calls it locally. Protected API routes use configured bearer authentication and role checks. Finder performs local URL heuristics; `POST /api/v1/sandbox/preview-url` does not fetch or render a remote page. The existing Controller AI, Finder AI, Defence AI, Offence AI, and Informer AI remain in the same backend process. There is no browser session manager, VM supervisor, worker RPC, egress gateway, remote display service, or browser lifecycle cleanup implementation. The Android workflow is explicitly a demonstration, not a native or paired client.
+The current application is a Windows-oriented React/Vite frontend and FastAPI backend. The backend defaults to `127.0.0.1`; the frontend calls it locally. Protected API routes use configured bearer authentication and role checks. Finder performs local URL heuristics; `POST /api/v1/sandbox/preview-url` does not fetch or render a remote page. The existing Controller AI, Finder AI, Defence AI, Offence AI, and Informer AI remain in the same backend process. A metadata-only browser-session manager and application-side worker identity/ticket primitives now exist. There is no VM supervisor, worker RPC broker, egress gateway, remote display service, or browser lifecycle cleanup implementation. The Android workflow is explicitly a demonstration, not a native or paired client.
 
-The repository's documented test-definition counts remain 39 backend pytest tests and 19 frontend Node.js cases. They are counts from source/configuration, not test execution results. This assessment did not run application tests.
+The 39 backend and 19 frontend test-definition counts in this assessment are historical and not current. Latest backend execution evidence is maintained in [MILESTONE_5_ACCEPTANCE_FRAMEWORK.md](MILESTONE_5_ACCEPTANCE_FRAMEWORK.md). This assessment did not run application tests.
 
 ### Verified development host inventory
 

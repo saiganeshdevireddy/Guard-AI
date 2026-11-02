@@ -193,21 +193,32 @@ export function createApiClient({
     scanText: (text) => postJson('/api/v1/scan/text', { text }),
     scanNetwork: (networkData) => postJson('/api/v1/scan/network', networkData),
     getThreats: () => get('/api/v1/scan/threats'),
+    getInspectionReports: (limit = 20) => get(`/api/v1/scan/inspections?limit=${encodeURIComponent(limit)}`),
+    getInspectionReport: (reportId) => get(`/api/v1/scan/inspections/${encodeURIComponent(reportId)}`),
+
+    // High-impact actions require a server-persisted, user-bound approval.
+    async requestActionApproval(action, target, payload) {
+      const requested = await postJson('/api/v1/emergency/approvals', { action, target, payload });
+      if (!requested?.approval_id) throw new ApiError('The backend did not create an approval.', { code: 'approval_unavailable' });
+      await postJson('/api/v1/emergency/approvals/approve', { approval_id: requested.approval_id });
+      return requested.approval_id;
+    },
 
     // Cryptographic vault
     getVaultStatus: () => get('/api/v1/vault/status'),
     lockVault: () => request('/api/v1/vault/lock', { method: 'POST' }),
-    unlockVault: (passphrase) => postJson('/api/v1/vault/unlock', { passphrase }),
+    unlockVault: (passphrase, approvalId) => postJson('/api/v1/vault/unlock', { passphrase, approval_id: approvalId }),
     getVaultItems: () => get('/api/v1/vault/items'),
     storeVaultItem: (label, plaintext, passphrase, category = 'CREDENTIAL') =>
       postJson('/api/v1/vault/items', { label, plaintext, passphrase, category }),
-    decryptVaultItem: (itemId, passphrase) =>
-      postJson(`/api/v1/vault/items/${itemId}/decrypt`, { passphrase }),
-    generateEscrow: (payload) => postJson('/api/v1/vault/escrow', { payload }),
-    restoreEscrow: (recoveryKey, encryptedToken) =>
+    decryptVaultItem: (itemId, passphrase, approvalId) =>
+      postJson(`/api/v1/vault/items/${encodeURIComponent(itemId)}/decrypt`, { passphrase, approval_id: approvalId }),
+    generateEscrow: (payload, approvalId) => postJson('/api/v1/vault/escrow', { payload, approval_id: approvalId }),
+    restoreEscrow: (recoveryKey, encryptedToken, approvalId) =>
       postJson('/api/v1/vault/escrow/restore', {
         recovery_key: recoveryKey,
         encrypted_token: encryptedToken,
+        approval_id: approvalId,
       }),
 
     // Audit ledger and optional blockchain anchoring
@@ -219,13 +230,13 @@ export function createApiClient({
 
     // Emergency response
     getEmergencyStatus: () => get('/api/v1/emergency/status'),
-    activateLockdown: (level, reason, humanConfirmed = true) =>
-      postJson('/api/v1/emergency/activate', { level, reason, human_confirmed: humanConfirmed }),
-    resetLockdown: (humanConfirmed = true) =>
-      postJson('/api/v1/emergency/reset', { human_confirmed: humanConfirmed }),
+    activateLockdown: (level, reason, target, approvalId) =>
+      postJson('/api/v1/emergency/activate', { level, reason, target, approval_id: approvalId }),
+    resetLockdown: (approvalId) =>
+      postJson('/api/v1/emergency/reset', { approval_id: approvalId }),
     getQuarantine: () => get('/api/v1/emergency/quarantine'),
-    simulateContainment: (actionType, target) =>
-      postJson('/api/v1/emergency/simulate-containment', { action_type: actionType, target }),
+    simulateContainment: (actionType, target, approvalId) =>
+      postJson('/api/v1/emergency/simulate-containment', { action_type: actionType, target, approval_id: approvalId }),
 
     // URL preview does not fetch remote page contents
     previewURLSafely: (url) => postJson('/api/v1/sandbox/preview-url', { url }),

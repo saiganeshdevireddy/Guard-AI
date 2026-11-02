@@ -94,16 +94,16 @@ HIGH_IMPACT_PERMISSIONS: Set[Permission] = {
 }
 
 
-def check_permission(role: AgentRole, permission: Permission, human_confirmed: bool = False) -> Tuple[bool, Optional[str]]:
+def check_permission(role: AgentRole, permission: Permission) -> Tuple[bool, Optional[str]]:
     """
     Evaluates whether an actor role has the requested permission
-    and verifies if high-impact human confirmation is met.
+    High-impact actions are denied here and must use the persisted approval service.
     """
     allowed_perms = ROLE_PERMISSIONS.get(role, set())
     if permission not in allowed_perms:
         return False, f"Role '{role.value}' does not possess permission '{permission.value}'."
 
-    if permission in HIGH_IMPACT_PERMISSIONS and not human_confirmed:
-        return False, f"Permission '{permission.value}' is a high-impact operation requiring explicit human confirmation."
+    if permission in HIGH_IMPACT_PERMISSIONS:
+        return False, f"Permission '{permission.value}' requires a persisted server-verified approval."
 
     return True, None

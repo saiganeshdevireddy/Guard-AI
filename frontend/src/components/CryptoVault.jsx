@@ -66,7 +66,9 @@ export function CryptoVault({ onVaultUpdated }) {
     setLoading(true);
     setError(null);
     try {
-      await api.unlockVault(passphrase);
+      if (!window.confirm('Unlocking the vault is a high-impact action. Continue to authenticated server approval?')) return;
+      const approvalId = await api.requestActionApproval('VAULT_UNLOCK', 'vault', { passphrase });
+      await api.unlockVault(passphrase, approvalId);
       setSuccess('Vault unlocked successfully.');
       await loadVaultData();
     } catch (err) {
@@ -116,7 +118,9 @@ export function CryptoVault({ onVaultUpdated }) {
       return;
     }
     try {
-      const res = await api.decryptVaultItem(itemId, passphrase);
+      if (!window.confirm(`Decrypt vault item ${itemId}? The action requires authenticated server approval.`)) return;
+      const approvalId = await api.requestActionApproval('VAULT_ITEM_DECRYPT', String(itemId), { item_id: itemId, passphrase });
+      const res = await api.decryptVaultItem(itemId, passphrase, approvalId);
       setDecryptedView({ ...decryptedView, [itemId]: res.plaintext });
     } catch (err) {
       setError(`Decryption failed: ${err.message}`);
@@ -127,7 +131,9 @@ export function CryptoVault({ onVaultUpdated }) {
     const backupText = prompt('Enter confidential text to package into an offline recovery envelope:');
     if (!backupText) return;
     try {
-      const res = await api.generateEscrow(backupText);
+      if (!window.confirm('Create an emergency recovery envelope for this payload? The server stores only an approval hash, but the payload is sent to the Guard AI backend for processing.')) return;
+      const approvalId = await api.requestActionApproval('VAULT_ESCROW_GENERATE', 'vault', { payload: backupText });
+      const res = await api.generateEscrow(backupText, approvalId);
       setEscrowResult(res);
       setRecoveryKeyVisible(false);
       setRestoredPayload('');
@@ -141,7 +147,11 @@ export function CryptoVault({ onVaultUpdated }) {
     setError(null);
     setRestoredPayload('');
     try {
-      const result = await api.restoreEscrow(recoveryKeyInput, recoveryTokenInput);
+      if (!window.confirm('Restore this escrow envelope? This is a high-impact recovery action and requires authenticated server approval.')) return;
+      const approvalId = await api.requestActionApproval('VAULT_ESCROW_RESTORE', 'vault', {
+        recovery_key: recoveryKeyInput, encrypted_token: recoveryTokenInput,
+      });
+      const result = await api.restoreEscrow(recoveryKeyInput, recoveryTokenInput, approvalId);
       setRestoredPayload(result.payload);
     } catch {
       setError('Recovery failed. Verify the key and encrypted envelope, then try again.');

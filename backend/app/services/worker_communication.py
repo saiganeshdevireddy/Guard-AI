@@ -486,6 +486,44 @@ class WorkerCommunicationService:
         except Exception:
             raise WorkerSecurityError("worker certificate authentication failed") from None
 
+    def verify_worker_signed_message(
+        self, db: Session, *, worker_id: str, message: bytes, signature_b64url: str,
+    ) -> bool:
+        """Verify signed worker evidence against its current enrolled certificate."""
+        if (not isinstance(message, bytes) or not message or len(message) > 65536
+                or not isinstance(signature_b64url, str) or not signature_b64url
+                or len(signature_b64url) > 4096):
+            raise WorkerSecurityError("worker message evidence is malformed")
+        try:
+            now = self.clock()
+            if now.tzinfo is None:
+                raise WorkerSecurityError("trusted clock is invalid")
+            identity = db.query(WorkerIdentityRecord).filter_by(worker_id=worker_id).one_or_none()
+            if identity is None:
+                raise WorkerSecurityError("worker identity is not registered")
+            certificate = _check_registered_certificate(identity, self.ca_pem, self.crl_pem, now)
+            encoded = signature_b64url.encode("ascii")
+            signature = base64.b64decode(
+                encoded + b"=" * (-len(encoded) % 4), altchars=b"-_", validate=True,
+            )
+            public_key = certificate.public_key()
+            if isinstance(public_key, rsa.RSAPublicKey):
+                public_key.verify(signature, message, padding.PKCS1v15(), hashes.SHA256())
+            elif isinstance(public_key, ec.EllipticCurvePublicKey):
+                public_key.verify(signature, message, ec.ECDSA(hashes.SHA256()))
+            elif isinstance(public_key, (ed25519.Ed25519PublicKey, ed448.Ed448PublicKey)):
+                public_key.verify(signature, message)
+            else:
+                raise WorkerSecurityError("worker key type is unsupported")
+            return True
+        except WorkerSecurityError:
+            raise
+        except (InvalidSignature, ValueError, TypeError, UnicodeError):
+            raise WorkerSecurityError("worker message signature is invalid") from None
+        except SQLAlchemyError:
+            db.rollback()
+            raise WorkerSecurityError("worker identity storage is unavailable") from None
+
     def issue_session_ticket(
         self,
         db: Session,

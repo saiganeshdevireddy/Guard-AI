@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Navbar } from './components/Navbar';
 import { AgentGrid } from './components/AgentGrid';
+import { CoreWorkflow } from './components/CoreWorkflow';
 import { VoiceBriefing } from './components/VoiceBriefing';
 import { QuickScanner } from './components/QuickScanner';
 import { CryptoVault } from './components/CryptoVault';
@@ -26,6 +27,7 @@ function DashboardApp() {
   const [backendAvailable, setBackendAvailable] = useState(null);
   const [vaultStatus, setVaultStatus] = useState(null);
   const [auditStatus, setAuditStatus] = useState(null);
+  const [blockchainStatus, setBlockchainStatus] = useState(null);
   const [freshness, setFreshness] = useState({});
   const [telemetryDegraded, setTelemetryDegraded] = useState(false);
   const [activeTab, setActiveTab] = useState('dashboard'); // 'dashboard', 'scanner', 'vault', 'sandbox', 'emergency', 'audit', 'android'
@@ -42,9 +44,9 @@ function DashboardApp() {
   const fetchSystemState = async () => {
     const requestId = ++telemetryRequest.current;
     setBackendAvailable(null); setAgents([]); setBriefing(null); setEmergencyStatus(null);
-    setPrivacyMode(null); setThreatCount(null); setVaultStatus(null); setAuditStatus(null);
+    setPrivacyMode(null); setThreatCount(null); setVaultStatus(null); setAuditStatus(null); setBlockchainStatus(null);
     try {
-      const [healthRes, agentsRes, briefingRes, emergRes, threatsRes, vaultRes, auditRes] = await Promise.allSettled([
+      const [healthRes, agentsRes, briefingRes, emergRes, threatsRes, vaultRes, auditRes, blockchainRes] = await Promise.allSettled([
         api.getHealth(),
         api.getAgents(),
         api.getVoiceBriefing(),
@@ -52,6 +54,7 @@ function DashboardApp() {
         api.getThreats(),
         api.getVaultStatus(),
         api.verifyAuditLedger(),
+        api.getBlockchainStatus(),
       ]);
 
       if (requestId !== telemetryRequest.current) return;
@@ -71,11 +74,12 @@ function DashboardApp() {
       if (threatsRes.status === 'fulfilled' && Number.isFinite(threatsRes.value?.count)) { setThreatCount(threatsRes.value.count); nextFreshness.threats = updatedAt; }
       if (vaultRes.status === 'fulfilled' && typeof vaultRes.value?.is_locked === 'boolean' && typeof vaultRes.value?.algorithm === 'string') { setVaultStatus(vaultRes.value); nextFreshness.vault = updatedAt; }
       if (auditRes.status === 'fulfilled' && typeof auditRes.value?.valid === 'boolean' && Number.isFinite(auditRes.value?.block_count)) { setAuditStatus(auditRes.value); nextFreshness.audit = updatedAt; }
+      if (blockchainRes.status === 'fulfilled' && typeof blockchainRes.value?.available === 'boolean') setBlockchainStatus(blockchainRes.value);
       setFreshness(nextFreshness);
       setTelemetryDegraded([healthRes, agentsRes, briefingRes, emergRes, threatsRes, vaultRes, auditRes].some((result) => result.status !== 'fulfilled'));
     } catch (err) {
       if (requestId === telemetryRequest.current) {
-        setBackendAvailable(false); setAgents([]); setBriefing(null); setEmergencyStatus(null);
+        setBackendAvailable(false); setAgents([]); setBriefing(null); setEmergencyStatus(null); setBlockchainStatus(null);
         setThreatCount(null); setVaultStatus(null); setAuditStatus(null); setFreshness({}); setTelemetryDegraded(true);
       }
     }
@@ -209,6 +213,13 @@ function DashboardApp() {
         {activeTab === 'dashboard' && (
           <div>
             <AgentGrid agents={agents} stateReceived={backendAvailable} updatedAt={freshness.agents} />
+            <CoreWorkflow
+              backendAvailable={backendAvailable}
+              vaultStatus={vaultStatus}
+              auditStatus={auditStatus}
+              blockchainStatus={blockchainStatus}
+              onNavigate={setActiveTab}
+            />
             <QuickScanner onThreatDetected={handleThreatDetected} />
           </div>
         )}

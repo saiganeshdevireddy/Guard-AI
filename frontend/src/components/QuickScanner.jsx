@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { api } from '../services/api';
 import { GlobeIcon, AlertIcon, CheckIcon, ActivityIcon, WifiIcon } from './Icons';
 
@@ -7,6 +7,18 @@ export function QuickScanner({ onThreatDetected }) {
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [reports, setReports] = useState([]);
+
+  const refreshReports = async () => {
+    try {
+      const response = await api.getInspectionReports(10);
+      setReports(Array.isArray(response.reports) ? response.reports : []);
+    } catch {
+      setReports([]);
+    }
+  };
+
+  useEffect(() => { refreshReports(); }, []);
 
   // Form states
   const [urlInput, setUrlInput] = useState('http://paypal-verification-account.xyz/login');
@@ -38,6 +50,7 @@ export function QuickScanner({ onThreatDetected }) {
         res = await api.scanNetwork(networkInput);
       }
       setResult(res);
+      if (res?.inspection) refreshReports();
       if (onThreatDetected) {
         onThreatDetected(res);
       }
@@ -195,6 +208,41 @@ export function QuickScanner({ onThreatDetected }) {
             Results are heuristic only. A low score is not proof that a URL or file is safe.
           </p>
 
+          {result.inspection && (
+            <div role="status" style={{ marginBottom: '14px', padding: '12px', border: '1px solid var(--cyan-border)', borderRadius: '8px' }}>
+              <strong>Guard AI verdict: {result.inspection.verdict}</strong>
+              <span> · Report {result.inspection.report_id}</span>
+              <ul>{result.inspection.limitations?.map((item) => <li key={item}>{item}</li>)}</ul>
+            </div>
+          )}
+
+          {result.report?.phishing_analysis && (
+            <div style={{ marginBottom: '12px', fontSize: '12px', color: 'var(--text-main)' }}>
+              <strong>URL heuristic score: {result.report.phishing_analysis.score}/100</strong>
+              <span> · {result.report.phishing_analysis.classification}</span>
+              <p style={{ marginTop: '4px', color: 'var(--text-muted)' }}>{result.report.phishing_analysis.verdict_scope}</p>
+              {result.report.phishing_analysis.score_breakdown?.length > 0 && (
+                <ul>{result.report.phishing_analysis.score_breakdown.map((item) => (
+                  <li key={item.rule}>{item.rule}: +{item.points}</li>
+                ))}</ul>
+              )}
+              {result.report.phishing_analysis.redirect_targets_observed?.length > 0 && (
+                <p>Redirect-like query destinations observed (not fetched): {result.report.phishing_analysis.redirect_targets_observed.join(', ')}</p>
+              )}
+            </div>
+          )}
+
+          {result.report?.file_analysis && (
+            <div style={{ marginBottom: '12px', fontSize: '12px', color: 'var(--text-main)' }}>
+              <strong>Detected file type: {result.report.file_analysis.detected_file_type}</strong>
+              <span> · type status: {result.report.file_analysis.file_type_status || 'UNVERIFIED'}</span>
+              <ul>{result.report.file_analysis.optional_scanners?.map((scanner) => (
+                <li key={scanner.name}>{scanner.name}: {scanner.status}{scanner.finding ? ` · ${scanner.finding}` : ''}</li>
+              ))}</ul>
+              <p>{result.report.file_analysis.verdict_scope}</p>
+            </div>
+          )}
+
           {/* Indicators List */}
           <div style={{ marginBottom: '14px' }}>
             <span style={{ fontSize: '11px', fontWeight: '700', color: 'var(--text-dim)', textTransform: 'uppercase' }}>
@@ -225,6 +273,16 @@ export function QuickScanner({ onThreatDetected }) {
           )}
         </div>
       )}
+
+      <section aria-label="Recent inspection reports" style={{ marginTop: '20px' }}>
+        <h3 style={{ color: 'var(--text-main)', fontSize: '14px' }}>Recent inspection reports</h3>
+        {reports.length === 0 ? <p style={{ color: 'var(--text-muted)', fontSize: '12px' }}>No saved reports available.</p> : (
+          <ul>{reports.map((report) => <li key={report.report_id}>
+            {report.type} · {report.verdict} · {report.score}/100 · {new Date(report.created_at).toLocaleString()}
+            {report.sha256 ? ` · SHA-256 ${report.sha256}` : ''}
+          </li>)}</ul>
+        )}
+      </section>
     </div>
   );
 }

@@ -39,7 +39,12 @@ def get_recent_agent_events(limit: int = Query(default=30, ge=1, le=200), _user=
 
 @router.post("/message")
 def send_agent_message(req: AgentMessageRequest, _user=Depends(require_permission("agents:write"))):
-    """Sends a direct command to a specific agent."""
+    """Sends a message to an agent without accepting client-asserted approval."""
+    if req.message.get("human_confirmed") is True:
+        raise HTTPException(
+            status_code=403,
+            detail="High-impact agent actions require a server-verified approval flow.",
+        )
     agent = controller_ai.agents.get(req.agent_id)
     if not agent:
         raise HTTPException(status_code=404, detail=f"Agent '{req.agent_id}' not found.")

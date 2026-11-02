@@ -4,7 +4,7 @@
 
 ## Purpose and approval status
 
-This document finalizes a proposed architecture for inspecting suspicious websites in a disposable, isolated browser session. It is a design proposal only. **No browser runtime, worker, gateway, session endpoint, or remote display service is implemented.** Implementation requires explicit approval after review.
+This document describes a proposed architecture for inspecting suspicious websites in a disposable, isolated browser session. No browser runtime, worker, egress/display gateway, or remote display service is implemented. A metadata-only browser-session API and worker authorization-ticket foundation exist but do not start or render a browser. Implementation requires explicit approval after review; current Milestone 5 evidence is in [MILESTONE_5_ACCEPTANCE_FRAMEWORK.md](MILESTONE_5_ACCEPTANCE_FRAMEWORK.md).
 
 The architecture preserves Guard AI's React/FastAPI application and agent roles. It does not substitute an iframe, HTML sanitizer, Playwright browser context, or backend URL fetch for a system isolation boundary.
 
@@ -31,11 +31,11 @@ This design is appropriate when Guard AI can use a dedicated Linux/KVM worker an
 | URL review API | **Partially implemented** | `POST /api/v1/sandbox/preview-url` validates URL syntax, requires `sandbox:write`, and returns local review. It does not fetch or render the page. |
 | Finder/browser analysis | **Partially implemented** | Finder uses lexical phishing heuristics and a local browser posture check. Live response headers are not fetched; a low score does not establish safety. |
 | File preview | **Implemented, limited** | Uploads are bounded by configured size; the response shows a raw byte preview of up to 512 bytes. It does not execute files. |
-| Genuine isolated browser | **Not implemented** | There is no browser process, session manager, VM supervisor, egress gateway, session-specific storage, or remote display service. |
+| Genuine isolated browser | **Not implemented** | A metadata-only session manager/API and authorization lifecycle exist. There is no browser process, VM supervisor, egress gateway, session-specific runtime storage, or remote display service. |
 | HTML sanitizer helper | **Unverified and unused** | `BrowserSecurityAgent.sanitize_html_for_sandbox` uses regular expressions and is not called by URL review. It must not be relied on as isolation or safe HTML sanitization. |
-| Controller/agents | **Partially implemented** | Agents run in one FastAPI process on a synchronous in-memory event bus. Controller records threat events; Defence locks the vault on elevated findings; Informer produces explanations; Offence handles local incident simulations. There is no durable browser-session orchestration. |
+| Controller/agents | **Partially implemented** | Agents run in one FastAPI process on a synchronous in-memory event bus. Controller records threat events; Defence locks the vault on elevated findings; Informer produces explanations; Offence handles local incident simulations. Persisted metadata authorization exists, but there is no distributed runtime orchestration, guest monitoring, or browser lifecycle execution. |
 | Authentication | **Implemented, configuration required** | Protected API routes use role-checked bearer authentication. Auth fails closed until a signing secret and active account are configured. |
-| Browser lifecycle/audit | **Not implemented** | No per-session state machine, session cleanup, runtime health verification, or privacy-safe browser lifecycle record exists. |
+| Browser lifecycle/audit | **Partially implemented** | Metadata session state and authorization audit exist. Runtime health verification, VM/browser lifecycle, cleanup, and cleanup verification do not exist. |
 
 Relevant existing files are `backend/app/routers/sandbox_api.py`, `backend/app/services/sandbox_engine.py`, `backend/app/agents/finder.py`, `backend/app/agents/defence.py`, `backend/app/agents/controller.py`, `backend/app/agents/informer.py`, `backend/app/agents/offence.py`, and `frontend/src/components/IsolatedSandbox.jsx`.
 
@@ -51,7 +51,7 @@ Relevant existing files are `backend/app/routers/sandbox_api.py`, `backend/app/s
 
 Finder URL scans can place the raw URL, including query/fragment text, in event and threat-report fields. Browser session URLs must be architecturally separated from that general threat-report path unless a separate redaction, access and retention design is approved; see [SECURITY_AUDIT_FINDINGS.md](SECURITY_AUDIT_FINDINGS.md).
 
-The repository currently defines 39 backend pytest tests and 19 frontend Node.js test cases. Existing sandbox coverage asserts that remote pages are not fetched or rendered. These are source-based counts, not test results; tests were not run for this design task. There are no runtime isolation tests.
+The 39 backend and 19 frontend test-definition counts in this historical assessment are not current. Latest backend execution evidence is maintained in [MILESTONE_5_ACCEPTANCE_FRAMEWORK.md](MILESTONE_5_ACCEPTANCE_FRAMEWORK.md). Existing sandbox coverage asserts that remote pages are not fetched or rendered; no runtime isolation tests have been run.
 
 ## Deployment options
 

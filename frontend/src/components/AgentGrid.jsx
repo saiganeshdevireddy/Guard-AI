@@ -39,8 +39,8 @@ export function AgentGrid({ agents = [], stateReceived = false, updatedAt = null
           <div className="agent-core-orbit agent-core-orbit-one" />
           <div className="agent-core-orbit agent-core-orbit-two" />
           <span className="agent-core-icon"><ShieldIcon size={32} /></span>
-          <strong>GUARD AI</strong>
-          <span>{stateReceived === null ? 'Checking backend' : stateReceived ? `${agents.length} states received` : 'Backend unavailable'}</span>
+          <strong>GUARD AI CORE</strong>
+          <span>Autonomous Controller · {stateReceived === null ? 'checking' : stateReceived ? `${agents.length} states` : 'unavailable'}</span>
         </div>
         {coreRoles.map(({ id, name, label, color, Icon }) => {
           const agent = byId.get(id);

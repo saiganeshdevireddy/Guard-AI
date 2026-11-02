@@ -16,6 +16,7 @@ from app.agents.base import BaseAgent, event_bus
 from app.core.audit_chain import AuditChainService
 from app.core.crypto_maze import crypto_maze
 from app.database import SessionLocal, VaultItem
+from app.services.human_approval import ApprovalError, HumanApprovalService
 
 
 class DefenceAI(BaseAgent):
@@ -82,12 +83,19 @@ class DefenceAI(BaseAgent):
             severity="WARNING"
         )
 
-    def unlock_vault(self, passphrase: str, db: Session) -> Dict[str, Any]:
+    def unlock_vault(self, passphrase: str, db: Session, *, approval_id: str | None = None,
+                     user_id: str | None = None) -> Dict[str, Any]:
         """
         Verifies passphrase against a test/canary item or unlocks session for subsequent operations.
         """
         self.task_count += 1
         self.heartbeat()
+        try:
+            HumanApprovalService().consume(db, approval_id=approval_id, user_id=user_id,
+                                           action="VAULT_UNLOCK", target="vault",
+                                           payload={"passphrase": passphrase})
+        except ApprovalError as exc:
+            return {"success": False, "message": str(exc), "pending_approval": True}
 
         # In a real vault, we verify passphrase against canary or existing items
         first_item = db.query(VaultItem).first()
@@ -110,13 +118,17 @@ class DefenceAI(BaseAgent):
                 )
                 return {"success": False, "message": "Authentication failed: Invalid passphrase."}
 
+        previous_locked, previous_passphrase = self.is_vault_locked, self.active_session_passphrase
         self.is_vault_locked = False
         self.active_session_passphrase = passphrase
 
-        AuditChainService.record_event(
-            db, actor="Defence AI", event_type="VAULT_UNLOCKED",
-            payload={"status": "UNLOCKED"}
-        )
+        try:
+            AuditChainService.record_event(db, actor="Defence AI", event_type="VAULT_UNLOCKED",
+                                           payload={"status": "UNLOCKED"})
+        except Exception:
+            db.rollback()
+            self.is_vault_locked, self.active_session_passphrase = previous_locked, previous_passphrase
+            return {"success": False, "message": "Required audit persistence failed; vault remains locked."}
         return {"success": True, "message": "Cryptographic Vault unlocked successfully."}
 
     def encrypt_and_store_secret(
@@ -171,7 +183,8 @@ class DefenceAI(BaseAgent):
         self,
         db: Session,
         item_id: int,
-        passphrase: str
+        passphrase: str,
+        *, approval_id: str | None = None, user_id: str | None = None,
     ) -> Dict[str, Any]:
         """
         Retrieves and decrypts a vault item.
@@ -182,6 +195,14 @@ class DefenceAI(BaseAgent):
         item = db.query(VaultItem).filter(VaultItem.id == item_id).first()
         if not item:
             return {"error": "Vault item not found"}
+
+        try:
+            HumanApprovalService().consume(
+                db, approval_id=approval_id, user_id=user_id, action="VAULT_ITEM_DECRYPT",
+                target=str(item_id), payload={"item_id": item_id, "passphrase": passphrase},
+            )
+        except ApprovalError as exc:
+            return {"error": str(exc), "pending_approval": True}
 
         try:
             plaintext = crypto_maze.decrypt_segmented(
@@ -218,18 +239,43 @@ class DefenceAI(BaseAgent):
             )
             return {"error": str(e), "verified": False}
 
-    def generate_escrow_backup(self, payload: str) -> Dict[str, str]:
+    def generate_escrow_backup(self, payload: str, *, db: Session, approval_id: str | None = None,
+                               user_id: str | None = None) -> Dict[str, str]:
         """Generates emergency disaster recovery token via Fernet envelope."""
-        key, token = crypto_maze.generate_recovery_token(payload)
+        try:
+            HumanApprovalService().consume(db, approval_id=approval_id, user_id=user_id,
+                                           action="VAULT_ESCROW_GENERATE", target="vault",
+                                           payload={"payload": payload})
+        except ApprovalError:
+            return {"error": "Server-verified approval is required."}
+        try:
+            key, token = crypto_maze.generate_recovery_token(payload)
+            AuditChainService.record_event(db, actor="Defence AI", event_type="VAULT_ESCROW_GENERATED",
+                                           payload={"result": "success"})
+        except Exception:
+            db.rollback()
+            return {"error": "Escrow generation could not be safely recorded."}
         return {
             "recovery_key": key,
             "encrypted_token": token,
             "instructions": "Store the recovery key in an isolated physical vault or offline medium."
         }
 
-    def restore_escrow_backup(self, recovery_key: str, encrypted_token: str) -> str:
-        """Restores a user-held recovery envelope; inputs are not logged or persisted."""
-        return crypto_maze.restore_from_recovery_token(recovery_key, encrypted_token)
+    def restore_escrow_backup(self, recovery_key: str, encrypted_token: str, *, db: Session,
+                              approval_id: str | None = None, user_id: str | None = None) -> str:
+        """Restore only under a user-bound approval; never persist secrets in the audit payload."""
+        HumanApprovalService().consume(
+            db, approval_id=approval_id, user_id=user_id, action="VAULT_ESCROW_RESTORE", target="vault",
+            payload={"recovery_key": recovery_key, "encrypted_token": encrypted_token},
+        )
+        try:
+            restored = crypto_maze.restore_from_recovery_token(recovery_key, encrypted_token)
+            AuditChainService.record_event(db, actor="Defence AI", event_type="VAULT_ESCROW_RESTORED",
+                                           payload={"result": "success", "approval_id": approval_id})
+            return restored
+        except Exception:
+            db.rollback()
+            raise
 
     def handle_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         action = message.get("action")

@@ -21,6 +21,7 @@ from app.core.audit_chain import AuditChainService
 from app.core.permissions import AgentRole, Permission, check_permission
 from app.core.security import sanitize_filepath
 from app.database import EmergencyStatus, QuarantineRecord, SessionLocal
+from app.services.human_approval import ApprovalError, HumanApprovalService
 
 QUARANTINE_DIR = DATA_DIR / "quarantine"
 QUARANTINE_DIR.mkdir(parents=True, exist_ok=True)
@@ -45,7 +46,6 @@ class OffenceAI(BaseAgent):
 
     def _on_emergency_trigger(self, event):
         reason = event.payload.get("reason", "Critical threat detected by automated agent")
-        human_confirmed = event.payload.get("human_confirmed", False)
         target = event.payload.get("target")
         db = SessionLocal()
         try:
@@ -54,7 +54,6 @@ class OffenceAI(BaseAgent):
                 level="HEIGHTENED",
                 reason=reason,
                 activated_by=event.sender_id,
-                human_confirmed=human_confirmed,
                 target=target
             )
         finally:
@@ -66,8 +65,9 @@ class OffenceAI(BaseAgent):
         level: str = "HEIGHTENED",
         reason: str = "Active incident containment",
         activated_by: str = "Offence AI",
-        human_confirmed: bool = False,
-        target: Optional[str] = None
+        target: Optional[str] = None,
+        approval_id: str | None = None,
+        user_id: str | None = None,
     ) -> Dict[str, Any]:
         """
         Activates heightened or full defensive containment.
@@ -78,14 +78,16 @@ class OffenceAI(BaseAgent):
 
         if level not in {"HEIGHTENED", "FULL_CONTAINMENT"}:
             return {"success": False, "error": "Unsupported lockdown level."}
+        previous_lockdown_level = self.lockdown_level
 
-        if not human_confirmed:
-            is_permitted, err = check_permission(AgentRole.OFFENCE, Permission.ACTIVATE_EMERGENCY, human_confirmed=False)
+        try:
+            HumanApprovalService().consume(
+                db, approval_id=approval_id, user_id=user_id, action="EMERGENCY_ACTIVATE",
+                target=target, payload={"level": level, "reason": reason, "target": target},
+            )
+        except ApprovalError as exc:
             return {
-                "success": False,
-                "error": err or "Emergency mode requires explicit operator confirmation.",
-                "pending_approval": True,
-                "action": level
+                "success": False, "error": str(exc), "pending_approval": True, "action": level,
             }
 
         self.lockdown_level = level
@@ -109,15 +111,16 @@ class OffenceAI(BaseAgent):
         if target:
             containment_log.append(f"Target '{target}' recorded for operator review")
         status.containment_actions_json = json.dumps(containment_log)
-        db.commit()
-
         # Audit ledger
-        AuditChainService.record_event(
-            db,
-            actor="Offence AI",
-            event_type="EMERGENCY_LOCKDOWN_ACTIVATED",
-            payload={"level": level, "reason": reason, "target": target}
-        )
+        try:
+            AuditChainService.record_event(
+                db, actor="Offence AI", event_type="EMERGENCY_LOCKDOWN_ACTIVATED",
+                payload={"level": level, "reason": reason, "target": target},
+            )
+        except Exception:
+            db.rollback()
+            self.lockdown_level = previous_lockdown_level
+            return {"success": False, "error": "Required audit persistence failed; action was rolled back."}
 
         # Broadcast across agent bus
         self.emit_event(
@@ -134,16 +137,20 @@ class OffenceAI(BaseAgent):
             "actions_executed": containment_log
         }
 
-    def reset_emergency_lockdown(self, db: Session, human_confirmed: bool = False) -> Dict[str, Any]:
+    def reset_emergency_lockdown(self, db: Session, *, approval_id: str | None = None,
+                                 user_id: str | None = None) -> Dict[str, Any]:
         """Resets emergency containment back to normal STANDARD status."""
         self.task_count += 1
         self.heartbeat()
 
-        permitted, message = check_permission(
-            AgentRole.OFFENCE, Permission.RESET_EMERGENCY, human_confirmed=human_confirmed
-        )
-        if not permitted:
-            return {"success": False, "error": message, "pending_approval": True}
+        previous_lockdown_level = self.lockdown_level
+        try:
+            HumanApprovalService().consume(
+                db, approval_id=approval_id, user_id=user_id, action="EMERGENCY_RESET",
+                target=None, payload={},
+            )
+        except ApprovalError as exc:
+            return {"success": False, "error": str(exc), "pending_approval": True}
 
         self.lockdown_level = "STANDARD"
         status = db.query(EmergencyStatus).filter_by(id=1).first()
@@ -151,14 +158,13 @@ class OffenceAI(BaseAgent):
             status.is_active = False
             status.lockdown_level = "STANDARD"
             status.reason = "Manual reset by administrator"
-            db.commit()
-
-        AuditChainService.record_event(
-            db,
-            actor="Offence AI",
-            event_type="EMERGENCY_LOCKDOWN_RESET",
-            payload={"status": "NORMAL"}
-        )
+        try:
+            AuditChainService.record_event(db, actor="Offence AI", event_type="EMERGENCY_LOCKDOWN_RESET",
+                                           payload={"status": "NORMAL"})
+        except Exception:
+            db.rollback()
+            self.lockdown_level = previous_lockdown_level
+            return {"success": False, "error": "Required audit persistence failed; action was rolled back."}
 
         self.emit_event(
             event_type="EMERGENCY_LOCKDOWN_RESET",
@@ -172,7 +178,8 @@ class OffenceAI(BaseAgent):
         self,
         db: Session,
         source_path: str,
-        reason: str = "Malicious signature detected"
+        reason: str = "Malicious signature detected",
+        *, approval_id: str | None = None, user_id: str | None = None,
     ) -> Dict[str, Any]:
         """
         Isolates a suspicious file by moving it into secure quarantine storage
@@ -181,8 +188,17 @@ class OffenceAI(BaseAgent):
         self.task_count += 1
         self.heartbeat()
 
+        try:
+            HumanApprovalService().consume(
+                db, approval_id=approval_id, user_id=user_id, action="FILE_QUARANTINE",
+                target=source_path, payload={"source_path": source_path, "reason": reason},
+            )
+        except ApprovalError as exc:
+            return {"error": str(exc), "pending_approval": True}
+
         p = Path(source_path)
         if not p.exists():
+            db.rollback()
             return {"error": f"Source file does not exist: {source_path}"}
 
         target_name = f"{p.name}.quarantined_{int(datetime.now(timezone.utc).timestamp())}"
@@ -193,6 +209,7 @@ class OffenceAI(BaseAgent):
             # Remove write/execute permissions
             os.chmod(str(safe_target), 0o400)
         except Exception as e:
+            db.rollback()
             return {"error": f"Failed to quarantine file: {str(e)}"}
 
         record = QuarantineRecord(
@@ -203,15 +220,20 @@ class OffenceAI(BaseAgent):
             notes=f"Original path: {source_path}"
         )
         db.add(record)
-        db.commit()
-        db.refresh(record)
-
-        AuditChainService.record_event(
-            db,
-            actor="Offence AI",
-            event_type="FILE_QUARANTINED",
-            payload={"record_id": record.id, "original_path": source_path, "reason": reason}
-        )
+        try:
+            db.flush()
+            AuditChainService.record_event(
+                db, actor="Offence AI", event_type="FILE_QUARANTINED",
+                payload={"record_id": record.id, "original_path": source_path, "reason": reason},
+            )
+        except Exception:
+            db.rollback()
+            try:
+                shutil.move(str(safe_target), str(p))
+                os.chmod(str(p), 0o600)
+            except Exception:
+                return {"error": "Audit failed and file rollback failed; operator recovery is required."}
+            return {"error": "Required audit persistence failed; quarantine was rolled back."}
 
         return {
             "success": True,
@@ -221,7 +243,8 @@ class OffenceAI(BaseAgent):
             "status": "ISOLATED"
         }
 
-    def simulate_containment_action(self, action_type: str, target: str) -> Dict[str, Any]:
+    def simulate_containment_action(self, action_type: str, target: str, *, db: Session,
+                                    approval_id: str | None = None, user_id: str | None = None) -> Dict[str, Any]:
         """
         Simulates network isolation or process termination in a controlled, safe environment
         without causing accidental damage to the host machine.
@@ -229,21 +252,39 @@ class OffenceAI(BaseAgent):
         self.task_count += 1
         self.heartbeat()
 
+        permission = "PROCESS_TERMINATE" if action_type == "PROCESS_TERMINATION" else "NETWORK_ISOLATE"
+        try:
+            HumanApprovalService().consume(
+                db, approval_id=approval_id, user_id=user_id, action=permission,
+                target=target, payload={"action_type": action_type, "target": target},
+            )
+        except ApprovalError as exc:
+            return {"error": str(exc), "pending_approval": True}
+
         if action_type == "PROCESS_TERMINATION":
-            return {
+            result = {
                 "action": "PROCESS_TERMINATION",
                 "target": target,
                 "status": "SIMULATED_SUSPENSION",
                 "details": f"Simulation only: no process '{target}' was suspended and no sockets were changed."
             }
         elif action_type == "NETWORK_ISOLATION":
-            return {
+            result = {
                 "action": "NETWORK_ISOLATION",
                 "target": target,
                 "status": "SIMULATED_NETWORK_ISOLATION",
                 "details": f"Simulation only: no network routes or packet filters for '{target}' were changed."
             }
-        return {"error": f"Unsupported containment action: {action_type}"}
+        else:
+            db.rollback()
+            return {"error": f"Unsupported containment action: {action_type}"}
+        try:
+            AuditChainService.record_event(db, actor="Offence AI", event_type="SIMULATED_CONTAINMENT",
+                                           payload={"action_type": action_type, "target": target})
+        except Exception:
+            db.rollback()
+            return {"error": "Required audit persistence failed; action was not recorded."}
+        return result
 
     def handle_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
         action = message.get("action")
@@ -261,10 +302,10 @@ class OffenceAI(BaseAgent):
                     db=db,
                     level=message.get("level", "HEIGHTENED"),
                     reason=message.get("reason", "Operator request"),
-                    human_confirmed=message.get("human_confirmed", False)
+                    target=message.get("target")
                 )
             elif action == "reset":
-                return self.reset_emergency_lockdown(db=db, human_confirmed=message.get("human_confirmed", False))
+                return self.reset_emergency_lockdown(db=db)
         finally:
             db.close()
         return {"error": f"Unknown action '{action}' for Offence AI"}

@@ -33,6 +33,9 @@ class Settings(BaseModel):
         if origin.strip()
     ]
     MAX_UPLOAD_BYTES: int = int(os.getenv("GUARD_AI_MAX_UPLOAD_BYTES", str(10 * 1024 * 1024)))
+    CLAMSCAN_PATH: str = os.getenv("GUARD_AI_CLAMSCAN_PATH", "")
+    YARA_PATH: str = os.getenv("GUARD_AI_YARA_PATH", "")
+    YARA_RULES_PATH: str = os.getenv("GUARD_AI_YARA_RULES_PATH", "")
 
     # Optional local Hardhat audit anchoring. Never configured by default.
     BLOCKCHAIN_RPC_URL: str = os.getenv("GUARD_AI_BLOCKCHAIN_RPC_URL", "")
@@ -50,6 +53,11 @@ class Settings(BaseModel):
     WORKER_TICKET_SIGNING_KEY: str = os.getenv("GUARD_AI_WORKER_TICKET_SIGNING_KEY", "")
     WORKER_TICKET_SIGNING_KEY_ID: str = os.getenv("GUARD_AI_WORKER_TICKET_SIGNING_KEY_ID", "v1")
     WORKER_TICKET_VERIFY_KEYS_JSON: str = os.getenv("GUARD_AI_WORKER_TICKET_VERIFY_KEYS_JSON", "{}")
+    # Asymmetric key used only to authenticate control-plane worker commands.
+    # It is optional and all command delivery remains unavailable without it.
+    WORKER_COMMAND_SIGNING_KEY_PEM: str = os.getenv("GUARD_AI_WORKER_COMMAND_SIGNING_KEY_PEM", "")
+    WORKER_COMMAND_SIGNING_KEY_ID: str = os.getenv("GUARD_AI_WORKER_COMMAND_SIGNING_KEY_ID", "")
+    HUMAN_APPROVAL_TTL_SECONDS: int = int(os.getenv("GUARD_AI_HUMAN_APPROVAL_TTL_SECONDS", "120"))
     
     # Agent Communication & Polling
     AGENT_HEARTBEAT_INTERVAL_SEC: int = 5

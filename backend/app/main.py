@@ -13,6 +13,7 @@ from app.routers import (
     agents_api,
     auth_api,
     android_api,
+    pipeline_api,
     audit_api,
     browser_sessions_api,
     emergency_api,
@@ -56,6 +57,7 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
+    allow_origin_regex=r"chrome-extension://[a-p]{32}",
     allow_credentials=False,
     allow_methods=["GET", "POST", "OPTIONS"],
     allow_headers=["Content-Type", "Authorization"],
@@ -73,6 +75,7 @@ app.include_router(browser_sessions_api.router, prefix=settings.API_V1_STR)
 app.include_router(workers_api.router, prefix=settings.API_V1_STR)
 app.include_router(workers_api.internal_router, prefix=settings.API_V1_STR)
 app.include_router(android_api.router, prefix=settings.API_V1_STR)
+app.include_router(pipeline_api.router)
 
 
 @app.get("/api/health")

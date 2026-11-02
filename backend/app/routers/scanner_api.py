@@ -9,9 +9,10 @@ from urllib.parse import urlsplit
 
 from app.agents.controller import controller_ai
 from app.config import settings
-from app.database import ThreatEvent, get_db
+from app.database import InspectionReportRecord, ThreatEvent, get_db
 from app.services.hybrid_ai import hybrid_ai
 from app.security.auth import require_permission
+from app.services.universal_inspection import InspectionStorageError, record_inspection, serialize_report
 
 router = APIRouter(prefix="/scan", tags=["Scanner"])
 
@@ -60,9 +61,19 @@ def scan_url(req: URLScanRequest, db: Session = Depends(get_db), _user=Depends(r
         severity=report["severity"],
         raw_details=report
     )
+    try:
+        inspection = record_inspection(
+            db, owner_id=_user["username"], inspection_type="URL", content=None,
+            score=report["composite_score"], findings=report["all_indicators"],
+            limitations=["Heuristic URL inspection only; the site was not opened or fetched.",
+                         "No indicators found does not establish that a URL is safe."],
+        )
+    except InspectionStorageError:
+        raise HTTPException(status_code=503, detail="Inspection result could not be stored safely.") from None
     return {
         "report": report,
-        "hybrid_explanation": explanation
+        "hybrid_explanation": explanation,
+        "inspection": inspection,
     }
 
 
@@ -81,9 +92,20 @@ async def scan_file(file: UploadFile = File(...), db: Session = Depends(get_db),
         severity=report["severity"],
         raw_details=report
     )
+    try:
+        inspection = record_inspection(
+            db, owner_id=_user["username"], inspection_type="FILE", content=content,
+            score=report["composite_score"],
+            findings=report["all_indicators"],
+            limitations=["Static byte inspection only; the file was not opened or executed.",
+                         "No detected indicators does not prove a file is safe."],
+        )
+    except InspectionStorageError:
+        raise HTTPException(status_code=503, detail="Inspection result could not be stored safely.") from None
     return {
         "report": report,
-        "hybrid_explanation": explanation
+        "hybrid_explanation": explanation,
+        "inspection": inspection,
     }
 
 
@@ -141,3 +163,23 @@ def list_threat_events(limit: int = Query(default=50, ge=1, le=200), db: Session
         ],
         "count": len(threats)
     }
+
+
+@router.get("/inspections")
+def list_inspections(limit: int = Query(default=50, ge=1, le=200),
+                     db: Session = Depends(get_db),
+                     _user=Depends(require_permission("scanner:read"))):
+    records = db.query(InspectionReportRecord).filter_by(owner_id=_user["username"]).order_by(
+        InspectionReportRecord.created_at.desc()).limit(limit).all()
+    return {"reports": [serialize_report(record) for record in records], "count": len(records)}
+
+
+@router.get("/inspections/{report_id}")
+def get_inspection(report_id: str, db: Session = Depends(get_db),
+                   _user=Depends(require_permission("scanner:read"))):
+    record = db.query(InspectionReportRecord).filter_by(
+        report_id=report_id, owner_id=_user["username"],
+    ).one_or_none()
+    if record is None:
+        raise HTTPException(status_code=404, detail="Inspection report not found.")
+    return {"report": serialize_report(record)}

@@ -148,6 +148,44 @@ class WorkerAuthorizationTicketRecord(Base):
     created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
 
 
+class BrowserWorkerOperationRecord(Base):
+    """Durable worker-command ledger; persists public evidence metadata only."""
+    __tablename__ = "browser_worker_operations"
+    __table_args__ = (
+        UniqueConstraint("operation_id", name="uq_browser_worker_operation_id"),
+    )
+
+    operation_id = Column(String(64), primary_key=True)
+    session_id = Column(String(64), nullable=False, index=True)
+    owner_id = Column(String(128), nullable=False)
+    worker_id = Column(String(128), nullable=False, index=True)
+    command_type = Column(String(32), nullable=False)
+    signing_key_id = Column(String(32), nullable=False)
+    command_signature = Column(Text, nullable=False)
+    status = Column(String(32), nullable=False, index=True)
+    issued_at = Column(DateTime, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    delivery_attempts = Column(Integer, nullable=False, default=0)
+    delivery_status = Column(String(32), nullable=False, default="PENDING")
+    acknowledgement_status = Column(String(32), nullable=False, default="PENDING")
+    acknowledgement_at = Column(DateTime, nullable=True)
+    acknowledgement_observed_at = Column(DateTime, nullable=True)
+    acknowledgement_signature = Column(Text, nullable=True)
+    termination_status = Column(String(32), nullable=False, default="PENDING")
+    termination_observed_at = Column(DateTime, nullable=True)
+    termination_signature = Column(Text, nullable=True)
+    termination_evidence_verified = Column(Boolean, nullable=False, default=False)
+    cleanup_status = Column(String(32), nullable=False, default="NOT_STARTED")
+    cleanup_attempts = Column(Integer, nullable=False, default=0)
+    cleanup_evidence_json = Column(Text, nullable=True)
+    cleanup_evidence_signature = Column(Text, nullable=True)
+    cleanup_evidence_verified = Column(Boolean, nullable=False, default=False)
+    retry_count = Column(Integer, nullable=False, default=0)
+    recovery_state = Column(String(32), nullable=False, default="NONE")
+    created_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, nullable=False, default=lambda: datetime.now(timezone.utc))
+
+
 class WorkerHealthRecord(Base):
     """Latest cryptographically authenticated health report, separate from enrollment."""
     __tablename__ = "worker_health_records"
@@ -208,6 +246,38 @@ class AgentState(Base):
     @metrics.setter
     def metrics(self, value: Dict[str, Any]):
         self.metrics_json = json.dumps(value)
+
+
+class HumanActionApproval(Base):
+    """Persisted, user-bound, single-use approval for high-impact actions."""
+    __tablename__ = "human_action_approvals"
+
+    approval_id = Column(String(64), primary_key=True)
+    user_id = Column(String(128), nullable=False, index=True)
+    action = Column(String(64), nullable=False, index=True)
+    target = Column(String(512), nullable=True)
+    payload_hash = Column(String(64), nullable=False)
+    status = Column(String(16), nullable=False, default="PENDING", index=True)
+    created_at = Column(DateTime(timezone=True), nullable=False)
+    expires_at = Column(DateTime(timezone=True), nullable=False, index=True)
+    approved_at = Column(DateTime(timezone=True), nullable=True)
+    consumed_at = Column(DateTime(timezone=True), nullable=True)
+    revoked_at = Column(DateTime(timezone=True), nullable=True)
+
+
+class InspectionReportRecord(Base):
+    """Privacy-minimized record of a static Universal Safe Inspection result."""
+    __tablename__ = "inspection_reports"
+
+    report_id = Column(String(64), primary_key=True)
+    owner_id = Column(String(128), nullable=False, index=True)
+    inspection_type = Column(String(16), nullable=False, index=True)
+    artifact_sha256 = Column(String(64), nullable=True, index=True)
+    verdict = Column(String(16), nullable=False, index=True)
+    score = Column(Integer, nullable=False)
+    findings_json = Column(Text, nullable=False, default="[]")
+    limitations_json = Column(Text, nullable=False, default="[]")
+    created_at = Column(DateTime(timezone=True), nullable=False, default=lambda: datetime.now(timezone.utc), index=True)
 
 
 class QuarantineRecord(Base):

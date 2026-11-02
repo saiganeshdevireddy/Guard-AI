@@ -4,6 +4,8 @@ For the consolidated six-role target architecture and security extension proposa
 
 Canonical records: [master architecture and ownership matrix](GUARD_AI_MASTER_ARCHITECTURE.md), [browser-isolation architecture](ISOLATED_BROWSER_ARCHITECTURE.md), and [security findings register](SECURITY_AUDIT_FINDINGS.md). Earlier browser research and readiness audits remain preserved as evidence and summaries.
 
+Milestone 5 scope, evidence, and closure criteria are governed by [MILESTONE_5_ACCEPTANCE_FRAMEWORK.md](MILESTONE_5_ACCEPTANCE_FRAMEWORK.md). **Software Acceptance: PARTIALLY VERIFIED. Infrastructure and Operational Acceptance: BLOCKED. Overall Milestone 5: not accepted.** These are separate gates; neither has been accepted.
+
 This table describes what this repository currently contains. It does not claim complete endpoint or operating-system protection.
 
 | Area | Current state | Limits |
@@ -37,13 +39,13 @@ Research, feasibility assessment and the implementation plan are complete as **d
 
 ### Browser runtime implementation phases
 
-All phases are **not started** and depend on approved hosting, budget, region/privacy requirements, and assigned operational ownership. The detailed deliverables, dependencies, security tests, risks, and completion criteria are in [BROWSER_RUNTIME_MVP_IMPLEMENTATION_PLAN.md](BROWSER_RUNTIME_MVP_IMPLEMENTATION_PLAN.md).
+Runtime phases A and D–G are **not started** and depend on approved hosting, budget, region/privacy requirements, and assigned operational ownership. Phase B and the metadata-only part of Phase C have application-side foundations, but their production/runtime scopes remain incomplete. Detailed Milestone 5 gates are in [MILESTONE_5_ACCEPTANCE_FRAMEWORK.md](MILESTONE_5_ACCEPTANCE_FRAMEWORK.md); runtime deliverables remain in [BROWSER_RUNTIME_MVP_IMPLEMENTATION_PLAN.md](BROWSER_RUNTIME_MVP_IMPLEMENTATION_PLAN.md).
 
 | Phase | Status | Scope |
 | --- | --- | --- |
 | A. Worker infrastructure and health checks | **Not started** | Harden Linux/KVM host, pinned Firecracker/jailer and signed guest image, health checks, resource limits, operations and patch ownership. |
-| B. Secure worker communication | **Not started** | Private network, mTLS/workload identity, typed broker operations, rotation, replay/idempotency and fail-closed behavior. |
-| C. Session manager | **Not started** | Authenticated create/status/stop, ownership, quotas, durable state, watchdog/reconciliation and privacy-minimal audit. |
+| B. Secure worker communication | **In progress — application-side foundation implemented and tested; production deployment unverified** | Certificate identity, signed health evidence, session-bound tickets, issue/redemption reauthorization, replay controls and fail-closed checks exist in source. Private worker networking, production mTLS, broker operations, key operations and PostgreSQL concurrency validation remain incomplete. See [Milestone 5 acceptance](MILESTONE_5_ACCEPTANCE_FRAMEWORK.md). |
+| C. Session manager | **In progress — metadata authorization foundation implemented and tested; runtime lifecycle unavailable** | Authenticated metadata-only authorization, ownership, persisted state and deterministic policy checks exist. Quotas, worker provisioning, active runtime/stop, watchdog/reconciliation and verified cleanup remain unavailable. |
 | D. Disposable browser runtime | **Not started** | One ephemeral Firecracker VM/profile per session, signed fixed image, resource caps, no shared state or host access. |
 | E. Remote display and input | **Not started** | HTTPS/WSS remote display, short-lived session-bound tickets, restricted keyboard/pointer input, no clipboard or file/device transfer. |
 | F. Security validation | **Not started; baseline after E, final gate after G** | Establish and run isolation, egress, SSRF/DNS, session separation, authorization, cleanup, failure and privacy tests after E; rerun full regression after agent integration in G. Any critical containment/cleanup failure blocks release. |
@@ -51,4 +53,4 @@ All phases are **not started** and depend on approved hosting, budget, region/pr
 
 ## Verification status
 
-The repository currently defines 39 backend pytest tests and 19 frontend Node.js test cases across API configuration, request handling, authentication, and session behavior. These counts describe the checked-in test definitions; they are not test results. Run them locally using the instructions in [GETTING_STARTED.md](GETTING_STARTED.md) and `npm test` from `frontend`.
+The latest recorded full backend run passed 134 tests on the baseline in [Milestone 5 acceptance](MILESTONE_5_ACCEPTANCE_FRAMEWORK.md). This point-in-time result is not a production-security claim. Frontend tests were not run in that backend verification; see [GETTING_STARTED.md](GETTING_STARTED.md) and run `npm test` from `frontend` for the frontend suite.

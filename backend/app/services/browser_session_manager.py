@@ -4,6 +4,7 @@ This module does not start a browser or provision a VM. It defines the local
 control-plane contract that a future authenticated Worker Supervisor adapter
 must satisfy. Until that adapter exists, no real session can become active.
 """
+import json
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
@@ -34,7 +35,11 @@ class WorkerRegistry(Protocol):
 
 
 class WorkerSupervisor(Protocol):
-    """Typed future worker contract; there is intentionally no implementation here."""
+    """Transport contract for a separately authenticated worker supervisor.
+
+    The current application does not configure an implementation. Implementations
+    must treat command delivery as pending until a verifier accepts worker evidence.
+    """
 
     def request_start(self, session_id: str, owner_id: str, policy_version: str) -> str:
         """Request a session-scoped start and return its worker operation ID."""
@@ -51,6 +56,13 @@ class CleanupEvidenceVerifier(Protocol):
 
     def verify_cleanup_receipt(self, receipt: "CleanupReceipt", session: "BrowserSession") -> bool:
         """Verify provenance, session/worker binding, and resource absence evidence."""
+
+
+class TerminationEvidenceVerifier(Protocol):
+    """Independently verify that a worker attests the targeted runtime is terminated."""
+
+    def verify_termination_receipt(self, receipt: "TerminationReceipt", session: "BrowserSession") -> bool:
+        """Verify authenticated provenance and session/worker/operation binding."""
 
 
 @dataclass(frozen=True)
@@ -160,10 +172,16 @@ class BrowserSessionPolicy:
 class SessionState(str, Enum):
     REQUESTED = "REQUESTED"
     AUTHORIZED = "AUTHORIZED"
+    CANCELLED = "CANCELLED"
+    CANCEL_REQUESTED = "CANCEL_REQUESTED"
     PROVISIONING = "PROVISIONING"
     ACTIVE = "ACTIVE"
     STOPPING = "STOPPING"
+    TERMINATION_PENDING = "TERMINATION_PENDING"
+    TERMINATED = "TERMINATED"
     CLEANUP_PENDING = "CLEANUP_PENDING"
+    CLEANUP_VERIFIED = "CLEANUP_VERIFIED"
+    CLEANUP_FAILED = "CLEANUP_FAILED"
     CLOSED = "CLOSED"
     DENIED = "DENIED"
     QUARANTINED = "QUARANTINED"
@@ -192,6 +210,50 @@ class CleanupReceipt:
     worker_id: str
     resources_absent: bool
     verified_at: datetime
+    signature_b64url: str = ""
+    operation_id: str = ""
+    runtime_terminated: bool = False
+    temporary_storage_removed: bool = False
+    session_data_removed: bool = False
+    credentials_disposed: bool = False
+    temporary_artifacts_removed: bool = False
+
+    def signed_bytes(self) -> bytes:
+        payload = {
+            "session_id": self.session_id,
+            "worker_id": self.worker_id,
+            "operation_id": self.operation_id,
+            "resources_absent": self.resources_absent,
+            "runtime_terminated": self.runtime_terminated,
+            "temporary_storage_removed": self.temporary_storage_removed,
+            "session_data_removed": self.session_data_removed,
+            "credentials_disposed": self.credentials_disposed,
+            "temporary_artifacts_removed": self.temporary_artifacts_removed,
+            "verified_at": self.verified_at.astimezone(timezone.utc).isoformat(),
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+
+
+@dataclass(frozen=True)
+class TerminationReceipt:
+    """Untrusted worker claim; it becomes evidence only after verifier acceptance."""
+
+    session_id: str
+    worker_id: str
+    operation_id: str
+    terminated: bool
+    observed_at: datetime
+    signature_b64url: str = ""
+
+    def signed_bytes(self) -> bytes:
+        payload = {
+            "session_id": self.session_id,
+            "worker_id": self.worker_id,
+            "operation_id": self.operation_id,
+            "terminated": self.terminated,
+            "observed_at": self.observed_at.astimezone(timezone.utc).isoformat(),
+        }
+        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
 
 
 class InvalidSessionTransition(ValueError):
@@ -200,12 +262,18 @@ class InvalidSessionTransition(ValueError):
 
 _ALLOWED_TRANSITIONS: dict[SessionState, frozenset[SessionState]] = {
     SessionState.REQUESTED: frozenset({SessionState.AUTHORIZED, SessionState.DENIED}),
-    SessionState.AUTHORIZED: frozenset({SessionState.PROVISIONING, SessionState.DENIED}),
+    SessionState.AUTHORIZED: frozenset({SessionState.PROVISIONING, SessionState.DENIED, SessionState.CANCELLED}),
+    SessionState.CANCELLED: frozenset(),
+    SessionState.CANCEL_REQUESTED: frozenset({SessionState.TERMINATION_PENDING, SessionState.QUARANTINED}),
     SessionState.PROVISIONING: frozenset({SessionState.ACTIVE, SessionState.CLEANUP_PENDING, SessionState.QUARANTINED}),
-    SessionState.ACTIVE: frozenset({SessionState.STOPPING, SessionState.QUARANTINED}),
-    SessionState.STOPPING: frozenset({SessionState.CLEANUP_PENDING, SessionState.QUARANTINED}),
-    SessionState.CLEANUP_PENDING: frozenset({SessionState.CLOSED, SessionState.QUARANTINED}),
-    SessionState.QUARANTINED: frozenset({SessionState.CLEANUP_PENDING}),
+    SessionState.ACTIVE: frozenset({SessionState.STOPPING, SessionState.CANCEL_REQUESTED, SessionState.QUARANTINED}),
+    SessionState.STOPPING: frozenset({SessionState.TERMINATION_PENDING, SessionState.QUARANTINED}),
+    SessionState.TERMINATION_PENDING: frozenset({SessionState.TERMINATED, SessionState.QUARANTINED}),
+    SessionState.TERMINATED: frozenset({SessionState.CLEANUP_PENDING}),
+    SessionState.CLEANUP_PENDING: frozenset({SessionState.CLOSED, SessionState.CLEANUP_VERIFIED, SessionState.CLEANUP_FAILED, SessionState.QUARANTINED}),
+    SessionState.CLEANUP_FAILED: frozenset({SessionState.CLEANUP_PENDING, SessionState.QUARANTINED}),
+    SessionState.CLEANUP_VERIFIED: frozenset(),
+    SessionState.QUARANTINED: frozenset({SessionState.CLEANUP_PENDING, SessionState.CLEANUP_FAILED}),
     SessionState.CLOSED: frozenset(),
     SessionState.DENIED: frozenset(),
 }
@@ -218,6 +286,8 @@ def transition_session(
     decision: PolicyDecision | None = None,
     cleanup_receipt: CleanupReceipt | None = None,
     cleanup_verifier: CleanupEvidenceVerifier | None = None,
+    termination_receipt: TerminationReceipt | None = None,
+    termination_verifier: TerminationEvidenceVerifier | None = None,
 ) -> BrowserSession:
     """Apply an allowed state transition and enforce authorization/cleanup gates."""
     if target not in _ALLOWED_TRANSITIONS[session.state]:
@@ -229,10 +299,29 @@ def transition_session(
         raise InvalidSessionTransition("authorization requires an affirmative policy decision")
     if target is SessionState.DENIED and (decision is None or decision.allowed):
         raise InvalidSessionTransition("denial requires a negative policy decision")
-    if target is SessionState.CLOSED:
+    if target is SessionState.TERMINATED:
+        if (termination_receipt is None or termination_receipt.session_id != session.session_id
+                or termination_receipt.worker_id != session.worker_id
+                or not termination_receipt.operation_id
+                or termination_receipt.terminated is not True
+                or termination_receipt.observed_at.tzinfo is None
+                or termination_verifier is None):
+            raise InvalidSessionTransition("terminated requires matching verified worker evidence")
+        try:
+            verified_termination = termination_verifier.verify_termination_receipt(termination_receipt, session)
+        except Exception:
+            verified_termination = False
+        if verified_termination is not True:
+            raise InvalidSessionTransition("worker termination evidence could not be verified")
+    if target in {SessionState.CLOSED, SessionState.CLEANUP_VERIFIED}:
         if (cleanup_receipt is None or cleanup_receipt.session_id != session.session_id
                 or cleanup_receipt.worker_id != session.worker_id
                 or cleanup_receipt.resources_absent is not True
+                or cleanup_receipt.runtime_terminated is not True
+                or cleanup_receipt.temporary_storage_removed is not True
+                or cleanup_receipt.session_data_removed is not True
+                or cleanup_receipt.credentials_disposed is not True
+                or cleanup_receipt.temporary_artifacts_removed is not True
                 or cleanup_receipt.verified_at.tzinfo is None
                 or cleanup_verifier is None):
             raise InvalidSessionTransition("closed requires matching verified cleanup evidence")

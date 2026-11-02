@@ -9,11 +9,13 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Path, status
 from pydantic import BaseModel, ConfigDict, StrictBool
+from sqlalchemy import update
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app.agents.controller import controller_ai
-from app.database import BrowserSessionRecord, get_db
+from app.core.audit_chain import AuditChainService
+from app.database import BrowserSessionRecord, WorkerAuthorizationTicketRecord, get_db
 from app.security.auth import require_permission
 from app.services.worker_communication import DatabaseWorkerRegistry
 from app.services.browser_session_manager import (
@@ -233,6 +235,81 @@ def get_browser_session(
     principal = BrowserPrincipal.from_authenticated_user(user)
     record = _get_owned_record(db, session_id, principal.subject)
     return _session_payload(record)
+
+
+@router.delete("/{session_id}")
+def cancel_browser_session(
+    session_id: str = Path(min_length=24, max_length=64, pattern=r"^[A-Za-z0-9_-]+$"),
+    user: dict = Depends(require_permission("sandbox:write")),
+    db: Session = Depends(get_db),
+):
+    """Cancel authorization metadata and revoke tickets; this never stops a runtime."""
+    principal = BrowserPrincipal.from_authenticated_user(user)
+    try:
+        record = db.query(BrowserSessionRecord).filter_by(
+            session_id=session_id,
+            owner_id=principal.subject,
+        ).with_for_update().one_or_none()
+    except SQLAlchemyError:
+        db.rollback()
+        raise _api_error(503, "session_store_unavailable", "Browser session data is unavailable.") from None
+    if record is None:
+        # Keep the same not-found behavior for unknown and other-user sessions.
+        raise _api_error(404, "session_not_found", "Browser session was not found.")
+    if record.state == SessionState.CANCELLED.value:
+        return _session_payload(record)
+    if record.state != SessionState.AUTHORIZED.value:
+        raise _api_error(409, "invalid_session_transition", "This browser session cannot be cancelled from its current state.")
+
+    now = datetime.now(timezone.utc)
+    try:
+        transition_session(_domain_session(record), SessionState.CANCELLED)
+        changed = db.execute(
+            update(BrowserSessionRecord)
+            .where(
+                BrowserSessionRecord.session_id == session_id,
+                BrowserSessionRecord.owner_id == principal.subject,
+                BrowserSessionRecord.state == SessionState.AUTHORIZED.value,
+            )
+            .values(state=SessionState.CANCELLED.value, updated_at=now)
+        )
+        if changed.rowcount != 1:
+            db.rollback()
+            current = _get_owned_record(db, session_id, principal.subject)
+            if current.state == SessionState.CANCELLED.value:
+                return _session_payload(current)
+            raise _api_error(409, "invalid_session_transition", "This browser session cannot be cancelled from its current state.")
+
+        db.execute(
+            update(WorkerAuthorizationTicketRecord)
+            .where(
+                WorkerAuthorizationTicketRecord.session_id == session_id,
+                WorkerAuthorizationTicketRecord.revoked_at.is_(None),
+            )
+            .values(revoked_at=now)
+        )
+        # The audit service commits the state and revocation updates in the same
+        # database transaction. Its failure must not produce a success response.
+        AuditChainService.record_event(
+            db,
+            actor=principal.subject,
+            event_type="BROWSER_SESSION_AUTHORIZATION_CANCELLED",
+            payload={"session_id": session_id},
+        )
+        db.refresh(record)
+        return _session_payload(record)
+    except HTTPException:
+        db.rollback()
+        raise
+    except SQLAlchemyError:
+        db.rollback()
+        raise _api_error(503, "session_store_unavailable", "Browser session data is unavailable.") from None
+    except InvalidSessionTransition:
+        db.rollback()
+        raise _api_error(409, "invalid_session_transition", "This browser session cannot be cancelled from its current state.") from None
+    except Exception:
+        db.rollback()
+        raise _api_error(503, "session_store_unavailable", "Browser session data is unavailable.") from None
 
 
 @router.post("/{session_id}/provision")
