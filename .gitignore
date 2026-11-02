@@ -46,3 +46,9 @@ server.log
 .venv
 *.db
 backend/data/
+
+server.log
+.env
+.venv
+*.db
+backend/data/

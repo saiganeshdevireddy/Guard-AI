@@ -1,3 +1,5 @@
+console.log("[Guard AI] content script active");
+
 (() => {
   if (window.__guardAiLinkProtectionInstalled) return;
   window.__guardAiLinkProtectionInstalled = true;
@@ -62,36 +64,19 @@
     controls.querySelector("button")?.focus();
   }
 
-  function navigate(anchor, url, targetTab) {
-    if (targetTab && !targetTab.closed) {
-      targetTab.location.replace(url);
-      return;
-    }
-    if (anchor.target === "_top" && window.top !== window) {
-      window.top.location.assign(url);
-    } else if (anchor.target && anchor.target !== "_self") {
-      window.open(url, anchor.target, "noopener");
-    } else {
-      window.location.assign(url);
-    }
-  }
-
-  document.addEventListener("click", (event) => {
+  function handleClick(event) {
     if (event.defaultPrevented || (event.button !== 0 && event.button !== 1)) return;
-    const anchor = event.composedPath().find((node) => node instanceof HTMLAnchorElement);
+    const anchor = event.target instanceof Element ? event.target.closest("a[href]") : null;
     if (!anchor || !anchor.href || anchor.hasAttribute("download")) return;
     const url = anchor.href;
     if (!/^https?:/i.test(url)) return;
 
-    // Preserve the user's original click gesture for links that open a new tab.
-    const opensNewContext = anchor.target === "_blank" || (event.ctrlKey || event.metaKey || event.shiftKey || event.button === 1);
-    const pendingTab = opensNewContext ? window.open("about:blank", "_blank") : null;
+    // Stop page handlers and native navigation before contacting the service worker.
     event.preventDefault();
     event.stopImmediatePropagation();
 
     chrome.runtime.sendMessage({ type: "GUARD_CHECK_LINK", url }, (result) => {
       if (chrome.runtime.lastError || !result?.ok) {
-        pendingTab?.close();
         showDecision({
           title: "Guard AI",
           message: "Guard AI backend not running",
@@ -99,7 +84,7 @@
           telugu: "గార్డ్ ఏఐ ఈ లింక్‌ను తనిఖీ చేయలేకపోయింది. కొనసాగించాలా వద్దా ఎంచుకోండి.",
           color: "#4b5563",
           buttons: [
-            { label: "Continue anyway", onClick: () => navigate(anchor, url) },
+            { label: "Continue anyway", onClick: () => { window.location.href = url; } },
             { label: "Go back", onClick: () => {} }
           ]
         });
@@ -110,7 +95,6 @@
       const telugu = result.telugu || "";
       speak(english, telugu);
       if (result.action === "block") {
-        pendingTab?.close();
         showDecision({
           title: "Dangerous link blocked",
           english,
@@ -119,18 +103,16 @@
           buttons: [{ label: "Go back", onClick: () => {} }]
         });
       } else if (result.action === "warn") {
-        pendingTab?.close();
         showDecision({
           title: "Guard AI warning",
           english,
           telugu,
           color: "#ca8a04",
-          buttons: [{ label: "Continue anyway", onClick: () => navigate(anchor, url) }]
+          buttons: [{ label: "Continue anyway", onClick: () => { window.location.href = url; } }]
         });
       } else if (result.action === "allow") {
-        navigate(anchor, url, pendingTab);
+        window.location.href = url;
       } else {
-        pendingTab?.close();
         showDecision({
           title: "Guard AI",
           message: "Guard AI backend not running",
@@ -138,11 +120,13 @@
           telugu: "గార్డ్ ఏఐ నిర్ణయం అందుబాటులో లేదు. కొనసాగించాలా వద్దా ఎంచుకోండి.",
           color: "#4b5563",
           buttons: [
-            { label: "Continue anyway", onClick: () => navigate(anchor, url) },
+            { label: "Continue anyway", onClick: () => { window.location.href = url; } },
             { label: "Go back", onClick: () => {} }
           ]
         });
       }
     });
-  }, true);
+  }
+
+  document.addEventListener("click", handleClick, true);
 })();
